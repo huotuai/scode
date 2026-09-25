@@ -17,10 +17,30 @@
 - [x] M1 双协议 provider(Anthropic + OpenAI 兼容)
 - [x] M2 agent 循环 + 工具接口/钩子
 - [x] M3 核心工具集(read/write/edit/bash/grep/find/ls)
-- [ ] M4 JSONL 会话 + 投影 + 系统提示词 + 压缩
-- [ ] M5 print 模式 + REPL
+- [x] M4 JSONL 会话 + 系统提示词(压缩/会话树待补)
+- [x] M5 print 模式 + REPL
+- [ ] M4 后续:压缩、会话树、读时投影
 - [ ] M6 TUI(bubbletea)
 - [ ] M7 MCP + 更多 provider
+
+## 使用
+
+```sh
+# OpenAI 兼容端点(GLM 等)
+export OPENAI_COMPAT_API_KEY=...
+export SCODE_OPENAI_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+scode -p --provider openai-compat --model glm-4.6 "任务描述"
+
+# Anthropic 协议(GLM Anthropic 兼容端点 / Claude)
+export ANTHROPIC_API_KEY=...
+export SCODE_ANTHROPIC_BASE_URL=...   # 可选
+scode            # REPL
+
+scode --sessions # 列出当前目录的会话
+scode --resume <id> -p "继续"
+```
+
+诊断:`SCODE_DEBUG_REQ=1` 转储请求体,`SCODE_DEBUG_SSE=1` 转储流式响应。
 
 ## 开发
 
