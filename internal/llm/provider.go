@@ -1,0 +1,80 @@
+package llm
+
+import "context"
+
+// Capabilities describes what a provider's wire protocol supports so cache
+// and transcript strategy can degrade per provider instead of per vendor
+// (pi's compat-flag approach). Adding a provider never touches the
+// transcript layer; it advertises capabilities and the request builder
+// adapts.
+type Capabilities struct {
+	// CacheBreakpoints: the protocol accepts explicit cache markers
+	// (Anthropic cache_control) that scode places on the last tool
+	// declaration, the system blocks, and the final user message.
+	CacheBreakpoints bool
+	// ToolAdditions: tools can be declared mid-conversation, letting the
+	// initial tools array stay byte-identical when the tool set grows.
+	ToolAdditions bool
+	// LongCacheRetention: 1h cache TTL is available (vs the 5m default).
+	LongCacheRetention bool
+	// MidConversationSystem: system messages may appear between user and
+	// assistant messages; otherwise they are collapsed into the leading
+	// prompt at the request boundary.
+	MidConversationSystem bool
+	// StreamingToolArguments: tool arguments arrive as incremental JSON
+	// fragments during streaming (Anthropic input_json_delta).
+	StreamingToolArguments bool
+}
+
+// CacheRetention selects the provider cache TTL, or disables caching.
+type CacheRetention string
+
+const (
+	CacheShort CacheRetention = "short" // default TTL (5m on Anthropic)
+	CacheLong  CacheRetention = "long"  // 1h where supported
+	CacheNone  CacheRetention = "none"  // one-off calls (compaction summaries)
+)
+
+// Model identifies a model behind a provider. Wire details (endpoint paths,
+// auth headers) live in the provider; the transcript layer only needs IDs.
+type Model struct {
+	ID        string `json:"id"`               // provider-local model id
+	Provider  string `json:"provider"`         // provider name (registry key)
+	APIShape  string `json:"apiShape"`         // wire protocol family, e.g. "anthropic-messages", "openai-completions"
+	MaxTokens int    `json:"maxTokens,omitempty"` // per-request output cap
+	Caps      Capabilities `json:"caps"`       // protocol capabilities (per model: same protocol can differ by endpoint)
+}
+
+// StreamOptions carries per-request knobs. Zero values mean provider
+// defaults. APIKey/BaseURL override config resolution (tests, relays).
+type StreamOptions struct {
+	MaxTokens     int
+	Temperature   float64
+	ThinkingLevel string          // "off"|"low"|"medium"|"high" as supported
+	Cache         CacheRetention  // empty = CacheShort
+	APIKey        string
+	BaseURL       string
+	ExtraHeaders  map[string]string
+}
+
+// Provider is a wire-protocol adapter: it turns a transcript into HTTP
+// requests and a response into an event stream. Implementations must honor
+// ctx cancellation (close the channel promptly) and follow the event
+// contract documented on EventType.
+type Provider interface {
+	Name() string
+	Caps() Capabilities
+	// Stream starts one assistant turn. The returned channel is closed after
+	// the terminal event. A non-nil error is reserved for setup failures
+	// (unknown model, missing key); request and runtime failures arrive as
+	// terminal error events.
+	Stream(ctx context.Context, model Model, t *Transcript, opts StreamOptions) (<-chan Event, error)
+}
+
+// ResolveCacheRetention defaults empty to CacheShort.
+func ResolveCacheRetention(r CacheRetention) CacheRetention {
+	if r == "" {
+		return CacheShort
+	}
+	return r
+}
