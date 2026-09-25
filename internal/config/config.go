@@ -125,6 +125,9 @@ func ResolveProvider(s *Settings, providerName, modelName string) (llm.Provider,
 			base = os.Getenv("SCODE_ANTHROPIC_BASE_URL")
 		}
 		if modelName == "" {
+			modelName = s.DefaultModel
+		}
+		if modelName == "" {
 			modelName = "claude-sonnet-4-5"
 		}
 		return anthropic.New(key, base), modelName, providerName, nil
@@ -148,6 +151,9 @@ func ResolveProvider(s *Settings, providerName, modelName string) (llm.Provider,
 		}
 		if base == "" {
 			base = os.Getenv("SCODE_OPENAI_BASE_URL")
+		}
+		if modelName == "" {
+			modelName = s.DefaultModel
 		}
 		if modelName == "" {
 			modelName = "gpt-5.2"
