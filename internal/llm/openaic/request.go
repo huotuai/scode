@@ -56,15 +56,47 @@ type wireStreamOptions struct {
 	IncludeUsage bool `json:"include_usage"`
 }
 
+// wireZhipuThinking is Zhipu/GLM's reasoning switch (on/off only; the
+// provider sizes the budget itself).
+type wireZhipuThinking struct {
+	Type string `json:"type"` // "enabled" | "disabled"
+}
+
 type wireRequest struct {
-	Model          string             `json:"model"`
-	Stream         bool               `json:"stream"`
-	StreamOptions  *wireStreamOptions `json:"stream_options,omitempty"`
-	Messages       []wireMessage      `json:"messages"`
-	Tools          []wireTool         `json:"tools,omitempty"`
-	MaxTokens      int                `json:"max_tokens,omitempty"`
-	Temperature    *float64           `json:"temperature,omitempty"`
-	PromptCacheKey string             `json:"prompt_cache_key,omitempty"`
+	Model           string             `json:"model"`
+	Stream          bool               `json:"stream"`
+	StreamOptions   *wireStreamOptions `json:"stream_options,omitempty"`
+	Messages        []wireMessage      `json:"messages"`
+	Tools           []wireTool         `json:"tools,omitempty"`
+	MaxTokens       int                `json:"max_tokens,omitempty"`
+	Temperature     *float64           `json:"temperature,omitempty"`
+	PromptCacheKey  string             `json:"prompt_cache_key,omitempty"`
+	ReasoningEffort string             `json:"reasoning_effort,omitempty"` // OpenAI-style low|medium|high
+	Thinking        *wireZhipuThinking `json:"thinking,omitempty"`         // Zhipu-style enabled/disabled
+}
+
+// applyThinkingWire maps the neutral ThinkingLevel onto the endpoint's
+// reasoning knob: Zhipu-style endpoints (bigmodel.cn / zhipuai / z.ai)
+// take a thinking on/off switch (the provider sizes the budget); others
+// take OpenAI-style reasoning_effort (low|medium|high). "off" on an
+// effort-style endpoint omits the field — the provider default applies.
+func applyThinkingWire(req *wireRequest, baseURL, level string) {
+	if level == "" {
+		return
+	}
+	lower := strings.ToLower(baseURL)
+	if strings.Contains(lower, "bigmodel.cn") || strings.Contains(lower, "zhipuai") || strings.Contains(lower, "z.ai") {
+		state := "enabled"
+		if level == "off" {
+			state = "disabled"
+		}
+		req.Thinking = &wireZhipuThinking{Type: state}
+		return
+	}
+	switch level {
+	case "low", "medium", "high":
+		req.ReasoningEffort = level
+	}
 }
 
 // ClampPromptCacheKey truncates the cache routing key to the protocol's
@@ -194,6 +226,7 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 	if opts.PromptCacheKey != "" && llm.ResolveCacheRetention(opts.Cache) != llm.CacheNone {
 		req.PromptCacheKey = ClampPromptCacheKey(opts.PromptCacheKey)
 	}
+	applyThinkingWire(req, opts.BaseURL, opts.ThinkingLevel)
 	return req, nil
 }
 

@@ -40,9 +40,10 @@ type App struct {
 
 // Options select provider/model/session at startup.
 type Options struct {
-	Provider string
-	Model    string
-	Resume   string // session id
+	Provider      string
+	Model         string
+	Resume        string // session id
+	ThinkingLevel string // off | low | medium | high
 }
 
 // Setup resolves configuration and builds the app. With Resume set, the
@@ -129,10 +130,13 @@ func Setup(opts Options) (*App, error) {
 	agentCfg := agent.Config{
 		Provider: p,
 		Model:    a.Model,
-		Stream:   llm.StreamOptions{PromptCacheKey: a.Sess.Header().ID},
-		Tools:    registry,
-		Env:      config.ShellEnv(a.Sess.Header().ID, providerName, modelID),
-		CWD:      cwd,
+		Stream: llm.StreamOptions{
+			PromptCacheKey: a.Sess.Header().ID,
+			ThinkingLevel:  resolveThinking(settings, opts.ThinkingLevel),
+		},
+		Tools: registry,
+		Env:   config.ShellEnv(a.Sess.Header().ID, providerName, modelID),
+		CWD:   cwd,
 	}
 	a.Agent = agent.New(agentCfg)
 	return a, nil
@@ -143,6 +147,14 @@ func apiShape(providerName string) string {
 		return "anthropic-messages"
 	}
 	return "openai-completions"
+}
+
+// resolveThinking: flag > settings default > provider default (empty).
+func resolveThinking(s *config.Settings, flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	return s.DefaultThinkingLevel
 }
 
 // persist appends one entry to the session file and the in-memory

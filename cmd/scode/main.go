@@ -18,6 +18,7 @@ func main() {
 	printLong := fs.Bool("print", false, "same as -p")
 	provider := fs.String("provider", "", "provider: anthropic | openai-compat")
 	model := fs.String("model", "", "model id")
+	thinking := fs.String("thinking", "", "reasoning intensity: off | low | medium | high")
 	resume := fs.String("resume", "", "resume a session id")
 	sessions := fs.Bool("sessions", false, "list sessions for this directory")
 	showVersion := fs.Bool("version", false, "print version")
@@ -34,7 +35,7 @@ func main() {
 		return
 	}
 
-	opts := cli.Options{Provider: *provider, Model: *model, Resume: *resume}
+	opts := cli.Options{Provider: *provider, Model: *model, Resume: *resume, ThinkingLevel: *thinking}
 
 	if *sessions {
 		if err := cli.ListSessions(opts); err != nil {

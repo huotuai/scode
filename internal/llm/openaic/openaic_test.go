@@ -227,6 +227,45 @@ func TestStreamHTTPError(t *testing.T) {
 	}
 }
 
+func TestBuildRequestThinkingWire(t *testing.T) {
+	tr := testTranscript(t)
+
+	// Effort-style endpoint: low|medium|high map to reasoning_effort.
+	req, err := BuildRequest(model(), tr, llm.StreamOptions{ThinkingLevel: "high"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.ReasoningEffort != "high" || req.Thinking != nil {
+		t.Fatalf("effort = %q thinking = %+v", req.ReasoningEffort, req.Thinking)
+	}
+	// "off" on effort-style endpoints omits the field entirely.
+	req, err = BuildRequest(model(), tr, llm.StreamOptions{ThinkingLevel: "off"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.ReasoningEffort != "" || req.Thinking != nil {
+		t.Fatalf("off must omit both knobs: %q %+v", req.ReasoningEffort, req.Thinking)
+	}
+
+	// Zhipu-style endpoint: on/off switch, level-agnostic.
+	zhipu := llm.StreamOptions{ThinkingLevel: "high", BaseURL: "https://open.bigmodel.cn/api/paas/v4"}
+	req, err = BuildRequest(model(), tr, zhipu)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Thinking == nil || req.Thinking.Type != "enabled" || req.ReasoningEffort != "" {
+		t.Fatalf("zhipu high = %+v effort=%q", req.Thinking, req.ReasoningEffort)
+	}
+	zhipu.ThinkingLevel = "off"
+	req, err = BuildRequest(model(), tr, zhipu)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Thinking == nil || req.Thinking.Type != "disabled" {
+		t.Fatalf("zhipu off = %+v", req.Thinking)
+	}
+}
+
 func TestClampPromptCacheKey(t *testing.T) {
 	if got := ClampPromptCacheKey("short"); got != "short" {
 		t.Fatalf("got %q", got)

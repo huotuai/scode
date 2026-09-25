@@ -65,6 +65,9 @@ func (p *Provider) Stream(ctx context.Context, model llm.Model, t *llm.Transcrip
 	if key == "" {
 		return nil, fmt.Errorf("openai-compat: no API key (set OPENAI_API_KEY or pass StreamOptions.APIKey)")
 	}
+	if opts.BaseURL == "" {
+		opts.BaseURL = p.BaseURL // request building keys off the real endpoint
+	}
 	req, err := BuildRequest(model, t, opts)
 	if err != nil {
 		return nil, err
