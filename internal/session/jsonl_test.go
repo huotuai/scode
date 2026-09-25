@@ -152,6 +152,52 @@ func TestOpenForAppendRepairsTornTail(t *testing.T) {
 	}
 }
 
+// Fork clones entries into a new id; upto trims mid-session.
+func TestForkCloneAndTrim(t *testing.T) {
+	s := newTestStore(t)
+	sess, err := s.Create("orig", "/p", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.AppendAll([]llm.Message{ //nolint:errcheck
+		{Role: llm.RoleSystem, Content: []llm.Block{llm.TextBlock("s")}},
+		{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("u1")}, TS: 1},
+		{Role: llm.RoleAssistant, StopReason: llm.StopEndTurn, Content: []llm.Block{llm.TextBlock("a1")}, TS: 2},
+		{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("u2")}, TS: 3},
+	})
+	sess.Close() //nolint:errcheck
+
+	forkID, err := s.Fork("orig", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := s.Load(forkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Entries) != 4 {
+		t.Fatalf("fork entries = %d, want 4", len(rec.Entries))
+	}
+	// Original untouched.
+	orig, _ := s.Load("orig")
+	if len(orig.Entries) != 4 {
+		t.Fatalf("original mutated: %d", len(orig.Entries))
+	}
+
+	trimID, err := s.Fork("orig", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec2, _ := s.Load(trimID)
+	if len(rec2.Entries) != 3 {
+		t.Fatalf("trimmed fork entries = %d, want 3", len(rec2.Entries))
+	}
+	// Trimmed fork stays resumable (leading system first).
+	if _, err := rec2.Transcript(); err != nil {
+		t.Fatalf("trimmed fork not resumable: %v", err)
+	}
+}
+
 func TestOpenForAppendChain(t *testing.T) {
 	s := newTestStore(t)
 	sess, err := s.Create("gen", "/p", "", "")

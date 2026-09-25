@@ -9,14 +9,22 @@ import (
 )
 
 // chatChunk is one streaming response object (data: {...} lines).
+// Reasoning arrives under different keys per dialect (reasoning_content
+// for DeepSeek/GLM, reasoning for many relays, reasoning_text for
+// llama.cpp — pi's first-non-empty rule); usage cache fields live in
+// different spots too (prompt_tokens_details.cached_tokens standard,
+// prompt_cache_hit_tokens DeepSeek, top-level cached_tokens Kimi,
+// prompt_tokens_details.cache_write_tokens OpenRouter).
 type chatChunk struct {
 	Choices []struct {
 		Index int `json:"index"`
 		Delta struct {
-			Role      string `json:"role"`
-			Content   string `json:"content"`
-			Reasoning string `json:"reasoning_content"`
-			ToolCalls []struct {
+			Role         string `json:"role"`
+			Content      string `json:"content"`
+			Reasoning    string `json:"reasoning_content"`
+			ReasoningAlt string `json:"reasoning"`
+			ReasoningLlm string `json:"reasoning_text"`
+			ToolCalls    []struct {
 				Index    int    `json:"index"`
 				ID       string `json:"id"`
 				Type     string `json:"type"`
@@ -33,7 +41,10 @@ type chatChunk struct {
 		CompletionTokens    int64 `json:"completion_tokens"`
 		PromptTokensDetails struct {
 			CachedTokens int64 `json:"cached_tokens"`
+			WriteTokens  int64 `json:"cache_write_tokens"`
 		} `json:"prompt_tokens_details"`
+		CacheHitTokens int64 `json:"prompt_cache_hit_tokens"` // DeepSeek
+		CachedTokens   int64 `json:"cached_tokens"`           // Kimi (top-level)
 	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
@@ -170,13 +181,13 @@ func (a *assembler) handle(data string) ([]llm.Event, bool, error) {
 			a.text.WriteString(ch.Delta.Content)
 			events = append(events, llm.Event{Type: llm.EventTextDelta, Delta: ch.Delta.Content})
 		}
-		if ch.Delta.Reasoning != "" {
+		if reasoning := firstNonEmpty(ch.Delta.Reasoning, ch.Delta.ReasoningAlt, ch.Delta.ReasoningLlm); reasoning != "" {
 			if !a.hadThink {
 				a.hadThink = true
 				events = append(events, llm.Event{Type: llm.EventThinkingStart})
 			}
-			a.think.WriteString(ch.Delta.Reasoning)
-			events = append(events, llm.Event{Type: llm.EventThinkingDelta, Delta: ch.Delta.Reasoning})
+			a.think.WriteString(reasoning)
+			events = append(events, llm.Event{Type: llm.EventThinkingDelta, Delta: reasoning})
 		}
 		for _, tc := range ch.Delta.ToolCalls {
 			live, ok := a.toolCalls[tc.Index]
@@ -207,11 +218,39 @@ func (a *assembler) handle(data string) ([]llm.Event, bool, error) {
 		}
 	}
 	if c.Usage != nil {
-		a.usage.Input = c.Usage.PromptTokens - c.Usage.PromptTokensDetails.CachedTokens
-		a.usage.CacheRead = c.Usage.PromptTokensDetails.CachedTokens
+		cacheRead := firstNonZero(
+			c.Usage.PromptTokensDetails.CachedTokens, // standard / OpenRouter
+			c.Usage.CacheHitTokens,                   // DeepSeek
+			c.Usage.CachedTokens,                     // Kimi (top-level)
+		)
+		cacheWrite := c.Usage.PromptTokensDetails.WriteTokens // OpenRouter
+		a.usage.CacheRead = cacheRead
+		a.usage.CacheWrite = cacheWrite
+		a.usage.Input = c.Usage.PromptTokens - cacheRead - cacheWrite
+		if a.usage.Input < 0 {
+			a.usage.Input = 0
+		}
 		a.usage.Output = c.Usage.CompletionTokens
 	}
 	return events, false, nil
+}
+
+func firstNonEmpty(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func firstNonZero(ns ...int64) int64 {
+	for _, n := range ns {
+		if n != 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 // toolCallEnds emits toolcall_end events for every accumulated call; call

@@ -125,6 +125,9 @@ type Usage struct {
 	CacheRead    int64 `json:"cacheRead,omitempty"`
 	CacheWrite   int64 `json:"cacheWrite,omitempty"`
 	CacheWrite1h int64 `json:"cacheWrite1h,omitempty"`
+	// CostUSD is the computed spend for this message, filled by the
+	// caller from per-model rates when configured.
+	CostUSD float64 `json:"costUSD,omitempty"`
 }
 
 // Add returns the element-wise sum of two usages (aggregate accounting).
@@ -135,12 +138,31 @@ func (u Usage) Add(o Usage) Usage {
 		CacheRead:    u.CacheRead + o.CacheRead,
 		CacheWrite:   u.CacheWrite + o.CacheWrite,
 		CacheWrite1h: u.CacheWrite1h + o.CacheWrite1h,
+		CostUSD:      u.CostUSD + o.CostUSD,
 	}
 }
 
-// TotalTokens returns the sum of all token buckets (cost-relevant volume).
+// Pricing holds per-million-token rates for cost computation.
+type Pricing struct {
+	Input      float64 `json:"input,omitempty"`
+	Output     float64 `json:"output,omitempty"`
+	CacheRead  float64 `json:"cacheRead,omitempty"`
+	CacheWrite float64 `json:"cacheWrite,omitempty"`
+}
+
+// Cost computes the spend of this usage under the rates (USD).
+func (u Usage) Cost(p Pricing) float64 {
+	const perMTok = 1_000_000
+	return float64(u.Input)/perMTok*p.Input +
+		float64(u.Output)/perMTok*p.Output +
+		float64(u.CacheRead)/perMTok*p.CacheRead +
+		float64(u.CacheWrite+u.CacheWrite1h)/perMTok*p.CacheWrite
+}
+
+// TotalTokens returns the input-side volume plus output (the 1h bucket
+// is a subset of CacheWrite on providers that report both).
 func (u Usage) TotalTokens() int64 {
-	return u.Input + u.Output + u.CacheRead + u.CacheWrite + u.CacheWrite1h
+	return u.Input + u.Output + u.CacheRead + u.CacheWrite
 }
 
 // Message is the atom of a transcript.

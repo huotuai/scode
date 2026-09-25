@@ -85,6 +85,37 @@ func (s *Store) Create(id, cwd, provider, model string) (*Session, error) {
 	return &Session{Path: path, store: s, w: bufio.NewWriter(f), f: f, header: h}, nil
 }
 
+// Fork clones an existing session's entries into a NEW file (same id
+// namespace, fresh timestamp-prefixed id) and returns the new id. The
+// original stays untouched — experiments run on the clone (pi's
+// createBranchedSession, clone form). When upto > 0 only the first
+// upto entries are copied (advanced mid-session fork).
+func (s *Store) Fork(id string, upto int) (string, error) {
+	rec, err := s.Load(id)
+	if err != nil {
+		return "", err
+	}
+	entries := rec.Entries
+	if upto > 0 && upto < len(entries) {
+		entries = entries[:upto]
+	}
+	newID := NewID(s.Now())
+	sess, err := s.Create(newID, rec.Header.CWD, rec.Header.Provider, rec.Header.Model)
+	if err != nil {
+		return "", err
+	}
+	for _, e := range entries {
+		if err := sess.AppendEntry(e); err != nil {
+			sess.Close() //nolint:errcheck
+			return "", err
+		}
+	}
+	if err := sess.Close(); err != nil {
+		return "", err
+	}
+	return newID, nil
+}
+
 // OpenForAppend reopens an existing session file for continued
 // appending — the resume path. The file's history stays append-only and
 // self-contained: no continuation files are spun off, so any stored

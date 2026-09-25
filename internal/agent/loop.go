@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +21,8 @@ const (
 	EvTurnStart  EventType = "turn_start"  // one LLM round begins
 	EvLLM        EventType = "llm"         // wrapped llm.Event (stream passthrough)
 	EvAssistant  EventType = "assistant"   // completed assistant message appended
+	EvUser       EventType = "user"        // user message appended (prompt or steered)
+	EvSteered    EventType = "steered"     // queued message accepted mid-run
 	EvToolStart  EventType = "tool_start"  // tool execution began
 	EvToolEnd    EventType = "tool_end"    // tool execution finished
 	EvTurnEnd    EventType = "turn_end"    // LLM round finished
@@ -30,7 +33,7 @@ const (
 type Event struct {
 	Type    EventType
 	LLM     *llm.Event   // set for EvLLM
-	Message *llm.Message // set for EvAssistant / EvAgentError
+	Message *llm.Message // set for EvAssistant / EvUser / EvAgentError
 	Call    *llm.Block   // set for EvToolStart / EvToolEnd
 	Result  *ToolResult  // set for EvToolEnd
 	Err     error        // set for EvAgentError
@@ -56,6 +59,9 @@ const defaultMaxTurns = 50
 // calling tools. One Agent, one Prompt at a time.
 type Agent struct {
 	cfg Config
+
+	steerMu sync.Mutex
+	steer   []string
 }
 
 func New(cfg Config) *Agent {
@@ -88,6 +94,45 @@ func (a *Agent) Prompt(ctx context.Context, t *llm.Transcript, userText string, 
 		return err
 	}
 	return a.Continue(ctx, t, out)
+}
+
+// Steer queues a user message for injection at the next safe point —
+// between LLM turns (mid-run correction, pi's steering) or when the
+// loop is about to stop (follow-up that keeps the run alive). Safe to
+// call from any goroutine while a run is active.
+func (a *Agent) Steer(text string) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	a.steerMu.Lock()
+	defer a.steerMu.Unlock()
+	a.steer = append(a.steer, text)
+}
+
+// drainSteer appends every queued message to the transcript as user
+// messages. Returns true when at least one was injected.
+func (a *Agent) drainSteer(t *llm.Transcript, out chan<- Event, emit bool) bool {
+	a.steerMu.Lock()
+	msgs := a.steer
+	a.steer = nil
+	a.steerMu.Unlock()
+	if len(msgs) == 0 {
+		return false
+	}
+	for _, m := range msgs {
+		um := llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock(m)}}
+		if err := t.AppendNow(um); err != nil {
+			continue
+		}
+		if emit {
+			u := um
+			select {
+			case out <- Event{Type: EvUser, Message: &u}:
+			default:
+			}
+		}
+	}
+	return true
 }
 
 // Continue resumes the loop from the current transcript tail (also the
@@ -162,9 +207,17 @@ func (r *run) loop(t *llm.Transcript) error {
 			return r.fail(t, r.ctx.Err())
 		}
 		if stop {
+			// A message steered while the model was wrapping up keeps
+			// the run alive (pi's follow-up queue).
+			if r.a.drainSteer(t, r.out, true) {
+				continue
+			}
 			r.emit(Event{Type: EvAgentEnd})
 			return nil
 		}
+		// Mid-run steering: corrections land between turns, so the next
+		// LLM call sees them (pi's getSteeringMessages drain point).
+		r.a.drainSteer(t, r.out, true)
 	}
 	return r.fail(t, fmt.Errorf("turn limit exceeded (%d)", r.a.cfg.MaxTurns))
 }

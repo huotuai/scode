@@ -25,6 +25,50 @@ func runPrompt(ctx context.Context, app *App, r *Renderer, promptText string) er
 	return <-done
 }
 
+// runPromptInteractive additionally accepts lines from input while the
+// run is in flight: plain lines steer the agent, slash commands are
+// held back and returned so the REPL can run them once the turn ends
+// (sending "/cost" to the model as a correction would be nonsense).
+func runPromptInteractive(ctx context.Context, app *App, r *Renderer, promptText string, input <-chan string) ([]string, error) {
+	out := make(chan agent.Event, 256)
+	done := make(chan error, 1)
+	go func() { done <- app.Run(ctx, out, promptText) }()
+	var pending []string
+	for out != nil {
+		select {
+		case ev, ok := <-out:
+			if !ok {
+				out = nil
+				continue
+			}
+			r.Handle(ev)
+		case line, ok := <-input:
+			if !ok {
+				continue
+			}
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if strings.HasPrefix(line, "/") {
+				pending = append(pending, line)
+				fmt.Fprintf(r.Err, "(queued command for after this run: %s)\n", line)
+				continue
+			}
+			app.Agent.Steer(line)
+			fmt.Fprintf(r.Err, "(steered: %s)\n", truncateFor(line, 60))
+		}
+	}
+	return pending, <-done
+}
+
+func truncateFor(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
 // abortableCtx cancels on the first Ctrl-C; the caller decides what a
 // second one means (exit).
 func abortableCtx() (context.Context, func()) {
@@ -74,7 +118,9 @@ func Print(opts Options, prompts []string) error {
 // ErrReported marks "already printed to stderr, just exit non-zero".
 var ErrReported = errors.New("reported")
 
-// REPL is the interactive line mode.
+// REPL is the interactive line mode. A single reader goroutine owns
+// stdin; while a run is in flight its lines steer the agent instead of
+// queuing a new prompt.
 func REPL(opts Options) error {
 	app, err := Setup(opts)
 	if err != nil {
@@ -82,23 +128,31 @@ func REPL(opts Options) error {
 	}
 	defer app.Close()
 
-	fmt.Printf("scode (%s / %s) — session %s\n/exit to quit, /sessions to list\n\n",
+	fmt.Printf("scode (%s / %s) — session %s\n/exit to quit, /sessions to list\n(type during a run to steer it)\n\n",
 		app.Model.Provider, app.Model.ID, app.Sess.Header().ID)
 
 	r := &Renderer{Out: os.Stdout, Err: os.Stderr}
-	sc := bufio.NewScanner(os.Stdin)
-	sc.Buffer(make([]byte, 0, 64*1024), 4<<20)
+	input := make(chan string)
+	go func() {
+		defer close(input)
+		sc := bufio.NewScanner(os.Stdin)
+		sc.Buffer(make([]byte, 0, 64*1024), 4<<20)
+		for sc.Scan() {
+			input <- sc.Text()
+		}
+	}()
 	ctx, cancel := abortableCtx()
 	defer cancel()
 	watchCancel(cancel)
 
 	for {
 		fmt.Print("> ")
-		if !sc.Scan() {
+		line, ok := <-input
+		if !ok {
 			fmt.Println()
 			return nil
 		}
-		line := strings.TrimSpace(sc.Text())
+		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
@@ -108,8 +162,14 @@ func REPL(opts Options) error {
 			}
 			continue
 		}
-		if err := runPrompt(ctx, app, r, line); err != nil {
+		pending, err := runPromptInteractive(ctx, app, r, line, input)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		}
+		for _, cmd := range pending {
+			if done, cerr := app.command(cmd); done || cerr != nil {
+				return cerr
+			}
 		}
 	}
 }
@@ -136,6 +196,30 @@ func (a *App) command(line string) (bool, error) {
 		return false, nil
 	case line == "/model":
 		fmt.Printf("%s / %s\n", a.Model.Provider, a.Model.ID)
+		return false, nil
+	case line == "/cost":
+		fmt.Println(a.CostReport())
+		return false, nil
+	case line == "/fork":
+		id, err := a.Store.Fork(a.Sess.Header().ID, 0)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fork failed:", err)
+			return false, nil
+		}
+		fmt.Printf("forked to %s — restart with: scode --resume %s\n", id, id)
+		return false, nil
+	case strings.HasPrefix(line, "/fork "):
+		n := 0
+		if _, err := fmt.Sscanf(line, "/fork %s %d", new(string), &n); err != nil || n <= 0 {
+			fmt.Fprintln(os.Stderr, "usage: /fork [entryCount] — clone this session (optionally keeping only the first N entries)")
+			return false, nil
+		}
+		id, err := a.Store.Fork(a.Sess.Header().ID, n)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fork failed:", err)
+			return false, nil
+		}
+		fmt.Printf("forked (first %d entries) to %s — restart with: scode --resume %s\n", n, id, id)
 		return false, nil
 	case len(line) > 8 && line[:8] == "/resume ":
 		fmt.Fprintln(os.Stderr, "resume needs a restart: scode --resume <id>")

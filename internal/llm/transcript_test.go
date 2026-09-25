@@ -308,8 +308,34 @@ func TestUsageAccounting(t *testing.T) {
 	if u.Input != 11 || u.CacheRead != 22 || u.CacheWrite != 3 || u.CacheWrite1h != 4 || u.Output != 55 {
 		t.Fatalf("Add wrong: %+v", u)
 	}
-	if u.TotalTokens() != 11+22+3+4+55 {
+	// The 1h bucket is a subset of CacheWrite on providers that report
+	// both — it must not be double-counted.
+	if u.TotalTokens() != 11+22+3+55 {
 		t.Fatalf("TotalTokens = %d", u.TotalTokens())
+	}
+}
+
+func TestUsageCostAndTotal(t *testing.T) {
+	p := Pricing{Input: 3, Output: 15, CacheRead: 0.3, CacheWrite: 3.75}
+	u := Usage{Input: 1_000_000, Output: 100_000, CacheRead: 2_000_000, CacheWrite: 500_000}
+	cost := u.Cost(p)
+	want := 3.0 + 1.5 + 0.6 + 1.875
+	if cost < want-1e-9 || cost > want+1e-9 {
+		t.Fatalf("cost = %v, want %v", cost, want)
+	}
+	// 1h bucket folds into the cache-write rate, not double-counted in
+	// TotalTokens.
+	u2 := Usage{CacheWrite: 100, CacheWrite1h: 100}
+	if u2.TotalTokens() != 100 {
+		t.Fatalf("TotalTokens double-counts 1h writes: %d", u2.TotalTokens())
+	}
+	// Callers stamp CostUSD (cli does it at persist time); Add then
+	// accumulates stamped values.
+	u.CostUSD = cost
+	sum := u.Add(Usage{CostUSD: 1.0})
+	wantSum := cost + 1.0
+	if sum.CostUSD < wantSum-1e-9 || sum.CostUSD > wantSum+1e-9 {
+		t.Fatalf("Add lost cost: %v, want %v", sum.CostUSD, wantSum)
 	}
 }
 

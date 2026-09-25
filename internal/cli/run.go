@@ -36,6 +36,9 @@ type App struct {
 	entries       []session.Entry
 	fileOps       session.FileOps
 	compactTokens int
+
+	pricing llm.Pricing
+	spent   llm.Usage // session-wide accumulated usage
 }
 
 // Options select provider/model/session at startup.
@@ -79,6 +82,9 @@ func Setup(opts Options) (*App, error) {
 		Settings: settings,
 	}
 	a.compactTokens = resolveCompactTokens(settings, a.Model.ContextWindow)
+	if p := settings.Providers[providerName].Pricing; p != nil {
+		a.pricing = *p
+	}
 
 	store, err := session.NewStore(session.DefaultRoot(cfgDir, cwd))
 	if err != nil {
@@ -254,6 +260,10 @@ func (a *App) Run(ctx context.Context, out chan<- agent.Event, promptText string
 	err := a.Agent.Prompt(ctx, a.Tr, promptText, out)
 
 	for _, m := range a.Tr.Messages()[before:] {
+		if m.Usage != nil {
+			m.Usage.CostUSD = m.Usage.Cost(a.pricing) // stamps the persisted copy
+			a.spent = a.spent.Add(*m.Usage)
+		}
 		if perr := a.persist(session.MsgEntry(m)); perr != nil {
 			return perr
 		}
@@ -263,6 +273,16 @@ func (a *App) Run(ctx context.Context, out chan<- agent.Event, promptText string
 	}
 	a.maybeCompact(ctx)
 	return nil
+}
+
+// CostReport renders the session's accumulated usage and spend.
+func (a *App) CostReport() string {
+	u := a.spent
+	s := fmt.Sprintf("tokens: in=%d out=%d cacheRead=%d cacheWrite=%d", u.Input, u.Output, u.CacheRead, u.CacheWrite)
+	if (a.pricing != llm.Pricing{}) {
+		s += fmt.Sprintf(" | cost: $%.4f", u.CostUSD)
+	}
+	return s
 }
 
 // maybeCompact summarizes the conversation when the projected context

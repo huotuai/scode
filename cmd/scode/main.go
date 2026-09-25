@@ -20,6 +20,7 @@ func main() {
 	model := fs.String("model", "", "model id")
 	thinking := fs.String("thinking", "", "reasoning intensity: off | low | medium | high")
 	resume := fs.String("resume", "", "resume a session id")
+	replMode := fs.Bool("repl", false, "force interactive REPL mode even when stdout is not a TTY")
 	sessions := fs.Bool("sessions", false, "list sessions for this directory")
 	showVersion := fs.Bool("version", false, "print version")
 	fs.Usage = func() {
@@ -46,7 +47,7 @@ func main() {
 	}
 
 	prompts := fs.Args()
-	oneShot := *printMode || *printLong || !isTTY(os.Stdout) || len(prompts) > 0
+	oneShot := !*replMode && (*printMode || *printLong || !isTTY(os.Stdout) || len(prompts) > 0)
 
 	var err error
 	if oneShot {

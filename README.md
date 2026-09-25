@@ -29,6 +29,18 @@
 并从**读时投影**重建 LLM 上下文——存储的历史永不改写,read/modified 文件清单跨代传递。
 `--resume` 从投影恢复。
 
+## REPL 命令
+
+| 命令 | 作用 |
+|---|---|
+| `/cost` | 本会话累计 token 与花费(配置了 pricing 时) |
+| `/fork [N]` | 克隆会话(可只保留前 N 条目)——实验不污染原会话 |
+| `/model` | 显示当前模型 |
+| `/sessions` | 列出本目录会话 |
+| `/exit` | 退出 |
+
+花费核算:settings.json 里给 provider 配 `pricing`(USD/百万 token)后,每条消息写入 costUSD、`/cost` 显示累计。
+
 ## 使用
 
 ```sh
@@ -40,7 +52,7 @@ scode -p --provider openai-compat --model glm-4.6 "任务描述"
 # Anthropic 协议(GLM Anthropic 兼容端点 / Claude)
 export ANTHROPIC_API_KEY=...
 export SCODE_ANTHROPIC_BASE_URL=...   # 可选
-scode            # REPL
+scode            # REPL(运行中输入普通文本=插话纠偏,输入 /命令=本轮结束后执行)
 
 scode --sessions # 列出当前目录的会话
 scode --resume <id> -p "继续"
