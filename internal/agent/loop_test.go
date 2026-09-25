@@ -181,7 +181,11 @@ func TestLoopToolRoundTrip(t *testing.T) {
 }
 
 func TestLoopProviderErrorRecorded(t *testing.T) {
+	// Turn-level retries replay the same turn, so the script needs one
+	// failure per attempt before the run gives up.
 	p := &scriptedProvider{script: []llm.Message{
+		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "rate limited"},
+		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "rate limited"},
 		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "rate limited"},
 	}}
 	a := newTestAgent(p, &echoTool{})
@@ -203,6 +207,29 @@ func TestLoopProviderErrorRecorded(t *testing.T) {
 	last := tr.Messages()[len(tr.Messages())-1]
 	if last.StopReason != llm.StopError || last.Error != "rate limited" {
 		t.Fatalf("transcript tail = %+v", last)
+	}
+}
+
+func TestLoopProviderErrorRetried(t *testing.T) {
+	// A transient failure followed by success: only the successful turn
+	// lands in the transcript.
+	p := &scriptedProvider{script: []llm.Message{
+		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "transient"},
+		{Role: llm.RoleAssistant, StopReason: llm.StopEndTurn, Content: []llm.Block{llm.TextBlock("recovered")}},
+	}}
+	a := newTestAgent(p, &echoTool{})
+	tr, _ := a.NewSession("t")
+	_, runErr := collect(t, a, tr, "go")
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	msgs := tr.Messages()
+	if len(msgs) != 3 { // system, user, assistant(recovered)
+		t.Fatalf("transcript len = %d: %+v", len(msgs), msgs)
+	}
+	last := msgs[len(msgs)-1]
+	if last.StopReason == llm.StopError || last.Content[0].Text != "recovered" {
+		t.Fatalf("tail = %+v", last)
 	}
 }
 

@@ -137,6 +137,11 @@ func (a *assembler) handle(data string) ([]llm.Event, bool, error) {
 		}
 		events = append(events, a.toolCallEnds()...)
 		msg := a.snapshot()
+		if a.err != "" {
+			// Some compat providers (GLM) report mid-generation failures
+			// as an error-ish finish_reason with empty content.
+			return append(events, llm.Event{Type: llm.EventError, Message: &msg, Reason: llm.StopError, Err: fmt.Errorf("%s", a.err)}), true, nil
+		}
 		events = append(events, llm.Event{Type: llm.EventDone, Message: &msg, Reason: msg.StopReason})
 		return events, true, nil
 	}
@@ -193,7 +198,12 @@ func (a *assembler) handle(data string) ([]llm.Event, bool, error) {
 			}
 		}
 		if ch.FinishReason != nil && *ch.FinishReason != "" {
-			a.finished = *ch.FinishReason
+			switch *ch.FinishReason {
+			case "network_error", "error":
+				a.err = fmt.Sprintf("provider reported finish_reason=%s", *ch.FinishReason)
+			default:
+				a.finished = *ch.FinishReason
+			}
 		}
 	}
 	if c.Usage != nil {

@@ -73,6 +73,9 @@ func (p *Provider) Stream(ctx context.Context, model llm.Model, t *llm.Transcrip
 	if err != nil {
 		return nil, err
 	}
+	if os.Getenv("SCODE_DEBUG_REQ") == "1" {
+		fmt.Fprintf(os.Stderr, "[scode] request: %s\n", body)
+	}
 
 	out := make(chan llm.Event, 64)
 	go func() {
@@ -103,7 +106,11 @@ func (p *Provider) Stream(ctx context.Context, model llm.Model, t *llm.Transcrip
 
 func (p *Provider) pump(ctx context.Context, r io.Reader, model string, out chan<- llm.Event) {
 	asm := newAssembler(model)
+	debug := os.Getenv("SCODE_DEBUG_SSE") == "1"
 	err := llm.ReadSSE(r, func(ev llm.SSEEvent) error {
+		if debug {
+			fmt.Fprintf(os.Stderr, "[scode] sse: %s\n", ev.Data)
+		}
 		events, terminal, err := asm.handle(ev.Data) // chat chunks arrive as unnamed data events
 		for _, e := range events {
 			select {

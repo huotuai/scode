@@ -1,29 +1,75 @@
 // Command scode is a lean Go coding agent built on pi's architecture.
-// M0: message model only; CLI modes arrive with M5.
 package main
 
 import (
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 
-	"scode/internal/llm"
+	"scode/internal/cli"
 )
 
+var version = "dev"
+
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "version" {
-		fmt.Println("scode dev (M0: message model)")
+	fs := flag.NewFlagSet("scode", flag.ContinueOnError)
+	printMode := fs.Bool("p", false, "one-shot: run prompt(s) and exit (auto when stdout is not a TTY)")
+	printLong := fs.Bool("print", false, "same as -p")
+	provider := fs.String("provider", "", "provider: anthropic | openai-compat")
+	model := fs.String("model", "", "model id")
+	resume := fs.String("resume", "", "resume a session id")
+	sessions := fs.Bool("sessions", false, "list sessions for this directory")
+	showVersion := fs.Bool("version", false, "print version")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "scode [flags] [prompt...]")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(os.Args[1:]); err != nil {
+		os.Exit(2)
+	}
+
+	if *showVersion {
+		fmt.Println("scode", version)
 		return
 	}
-	// Smoke: prove the message model round-trips. Real modes land in M5.
-	tr, err := llm.NormalizeContext(llm.Context{
-		SystemPrompt: "scode",
-		Tools:        []llm.Tool{{Name: "read", Description: "read a file"}},
-		Messages:     []llm.Message{{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("hello")}, TS: 1}},
-	})
+
+	opts := cli.Options{Provider: *provider, Model: *model, Resume: *resume}
+
+	if *sessions {
+		if err := cli.ListSessions(opts); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	prompts := fs.Args()
+	oneShot := *printMode || *printLong || !isTTY(os.Stdout) || len(prompts) > 0
+
+	var err error
+	if oneShot {
+		if len(prompts) == 0 {
+			fmt.Fprintln(os.Stderr, "error: -p requires a prompt")
+			os.Exit(2)
+		}
+		err = cli.Print(opts, prompts)
+	} else {
+		err = cli.REPL(opts)
+	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "fatal:", err)
+		if !errors.Is(err, cli.ErrReported) {
+			fmt.Fprintln(os.Stderr, "error:", err)
+		}
 		os.Exit(1)
 	}
-	b, _ := llm.CanonicalBytes(tr.Messages())
-	os.Stdout.Write(b)
+}
+
+// isTTY reports whether f is a terminal.
+func isTTY(f *os.File) bool {
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }

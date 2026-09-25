@@ -164,26 +164,44 @@ func (r *run) loop(t *llm.Transcript) error {
 	return r.fail(t, fmt.Errorf("turn limit exceeded (%d)", r.a.cfg.MaxTurns))
 }
 
+// turnRetries re-attempts an LLM round whose stream failed with a
+// provider-side error (the transcript tail is unchanged, so the retry is
+// a pure replay — pi's retryAssistantCall). Aborts never retry.
+const turnRetries = 2
+
 // turn streams one assistant message; when it requests tools, executes
 // them and appends the results. Returns stop=true when the loop should
-// end (assistant turn without tool calls).
+// end (assistant turn without tool calls). A provider error is retried
+// up to turnRetries times with backoff; only the winning attempt is
+// appended to the transcript.
 func (r *run) turn(t *llm.Transcript) (bool, error) {
-	events, err := r.a.cfg.Provider.Stream(r.ctx, r.a.cfg.Model, t, r.a.cfg.Stream)
-	if err != nil {
-		return false, err
-	}
 	var final *llm.Message
-	for ev := range events {
-		e := ev
-		if !r.emit(Event{Type: EvLLM, LLM: &e}) {
-			return false, r.ctx.Err()
+	for attempt := 0; ; attempt++ {
+		events, err := r.a.cfg.Provider.Stream(r.ctx, r.a.cfg.Model, t, r.a.cfg.Stream)
+		if err != nil {
+			return false, err
 		}
-		if ev.Terminal() {
-			final = ev.Message
+		for ev := range events {
+			e := ev
+			if !r.emit(Event{Type: EvLLM, LLM: &e}) {
+				return false, r.ctx.Err()
+			}
+			if ev.Terminal() {
+				final = ev.Message
+			}
 		}
-	}
-	if final == nil {
-		return false, fmt.Errorf("provider stream ended without a terminal event")
+		if final == nil {
+			return false, fmt.Errorf("provider stream ended without a terminal event")
+		}
+		if final.StopReason == llm.StopError && attempt < turnRetries {
+			select {
+			case <-r.ctx.Done():
+				return false, r.ctx.Err()
+			case <-time.After(time.Second << uint(attempt)):
+			}
+			continue
+		}
+		break
 	}
 	msg := *final
 	msg.TS = time.Now().UnixMilli()
