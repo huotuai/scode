@@ -203,10 +203,53 @@ func TestLoopProviderErrorRecorded(t *testing.T) {
 	if !sawErrEvent {
 		t.Fatal("no agent_error event")
 	}
-	// The failure is recorded in the transcript like any turn.
-	last := tr.Messages()[len(tr.Messages())-1]
-	if last.StopReason != llm.StopError || last.Error != "rate limited" {
-		t.Fatalf("transcript tail = %+v", last)
+	// One replayable failure turn: exactly one error assistant message,
+	// carrying text content so request builders can replay it.
+	msgs := tr.Messages()
+	errMsgs := 0
+	for _, m := range msgs {
+		if m.Role == llm.RoleAssistant && m.StopReason == llm.StopError {
+			errMsgs++
+			if len(m.Content) == 0 || m.Content[0].Kind != llm.BlockText {
+				t.Fatalf("error turn lacks replayable content: %+v", m)
+			}
+		}
+	}
+	if errMsgs != 1 {
+		t.Fatalf("error assistant messages = %d, want 1 (single encoding)", errMsgs)
+	}
+}
+
+// Regression: a failed run must not poison the session — the next prompt
+// still builds valid requests and succeeds.
+func TestLoopSessionRecoversAfterFailure(t *testing.T) {
+	p := &scriptedProvider{script: []llm.Message{
+		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "transient outage"},
+		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "transient outage"},
+		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "transient outage"},
+		{Role: llm.RoleAssistant, StopReason: llm.StopEndTurn, Content: []llm.Block{llm.TextBlock("back online")}},
+	}}
+	a := newTestAgent(p, &echoTool{})
+	tr, _ := a.NewSession("t")
+
+	if _, runErr := collect(t, a, tr, "try"); runErr == nil {
+		t.Fatal("first run must fail")
+	}
+	// The provider the second run talks to must accept the transcript —
+	// scriptedProvider replays it through Append, which would reject a
+	// poisoned shape.
+	events, runErr := collect(t, a, tr, "retry")
+	if runErr != nil {
+		t.Fatalf("session did not recover: %v", runErr)
+	}
+	var final string
+	for _, ev := range events {
+		if ev.Type == EvAssistant && ev.Message != nil {
+			final = ev.Message.Content[0].Text
+		}
+	}
+	if final != "back online" {
+		t.Fatalf("final = %q", final)
 	}
 }
 

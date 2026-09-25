@@ -102,6 +102,60 @@ func TestSessionListNewestFirst(t *testing.T) {
 	}
 }
 
+// OpenForAppend: resumed sessions keep appending to the original file,
+// and the id stays resumable across generations.
+func TestOpenForAppendChain(t *testing.T) {
+	s := newTestStore(t)
+	sess, err := s.Create("gen", "/p", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.AppendAll([]llm.Message{ //nolint:errcheck
+		{Role: llm.RoleSystem, Content: []llm.Block{llm.TextBlock("s")}},
+		{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("u1")}, TS: 1},
+	})
+	sess.Close() //nolint:errcheck
+
+	// First resume generation: append more.
+	s2, err := s.OpenForAppend("gen")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.Append(llm.Message{Role: llm.RoleAssistant, StopReason: llm.StopEndTurn, Content: []llm.Block{llm.TextBlock("a1")}, TS: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second resume generation still works, full history intact.
+	s3, err := s.OpenForAppend("gen")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s3.Append(llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("u2")}, TS: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s3.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, err := s.Load("gen")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Entries) != 4 {
+		t.Fatalf("entries = %d, want 4 (single file, full history)", len(rec.Entries))
+	}
+	tr, err := rec.Transcript()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.Len() != 4 || tr.Messages()[3].Content[0].Text != "u2" {
+		t.Fatalf("transcript = %+v", tr.Messages())
+	}
+}
+
 func TestDefaultRootSanitizes(t *testing.T) {
 	root := DefaultRoot(filepath.Join(t.TempDir(), "cfg"), `E:\ai\harness\SCode`)
 	seg := filepath.Base(root)

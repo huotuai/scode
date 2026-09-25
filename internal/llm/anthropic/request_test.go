@@ -181,6 +181,31 @@ func TestBuildRequestSectionsRendering(t *testing.T) {
 // serialized request prefix byte-identical — modulo cache_control markers,
 // whose position legitimately moves to the new tail. Compare with markers
 // stripped: content must be stable.
+// Recorded failure turns (even legacy content-less ones) must replay as
+// text instead of failing request construction — regression for the
+// session-poisoning bug.
+func TestBuildRequestErrorTurnReplaysAsText(t *testing.T) {
+	tr, err := llm.NormalizeContext(llm.Context{
+		SystemPrompt: "p",
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("go")}, TS: 1},
+			{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "rate limited"},
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("again")}, TS: 2},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := BuildRequest(modelCaps(), tr, llm.StreamOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	asst := req.Messages[1]
+	if asst.Role != "assistant" || len(asst.Content) != 1 || asst.Content[0].Text != "[turn failed: rate limited]" {
+		t.Fatalf("error turn wire shape = %+v", asst)
+	}
+}
+
 func TestBuildRequestPrefixStability(t *testing.T) {
 	tr := buildTestTranscript(t)
 	req1, err := BuildRequest(modelCaps(), tr, llm.StreamOptions{})

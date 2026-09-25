@@ -119,16 +119,20 @@ func (r *run) emit(ev Event) bool {
 	}
 }
 
-// fail records the failure as an error assistant message in the transcript
-// (the run is part of the conversation) and reports it.
+// fail records the failure as ONE replayable assistant message in the
+// transcript (text content carries the reason so request builders can
+// send it back), then reports it.
 func (r *run) fail(t *llm.Transcript, err error) error {
 	stop := llm.StopError
+	text := fmt.Sprintf("[turn failed: %v]", err)
 	if r.ctx.Err() != nil {
 		stop = llm.StopAborted
+		text = "[turn aborted by caller]"
 	}
 	msg := llm.Message{
 		Role:       llm.RoleAssistant,
 		TS:         time.Now().UnixMilli(),
+		Content:    []llm.Block{llm.TextBlock(text)},
 		StopReason: stop,
 		Error:      err.Error(),
 	}
@@ -203,7 +207,18 @@ func (r *run) turn(t *llm.Transcript) (bool, error) {
 		}
 		break
 	}
+
 	msg := *final
+	if msg.StopReason == llm.StopError || msg.StopReason == llm.StopAborted {
+		// Failed attempts never append — fail() records exactly one
+		// replayable error turn. Appending the stream's content-less
+		// terminal message here would double-encode the failure and
+		// produce a shape request builders reject.
+		if msg.StopReason == llm.StopError {
+			return false, fmt.Errorf("%s", msg.Error)
+		}
+		return false, r.ctx.Err()
+	}
 	msg.TS = time.Now().UnixMilli()
 	if err := t.Append(msg); err != nil {
 		return false, err
@@ -212,16 +227,10 @@ func (r *run) turn(t *llm.Transcript) (bool, error) {
 		return false, r.ctx.Err()
 	}
 
-	switch msg.StopReason {
-	case llm.StopError:
-		return false, fmt.Errorf("%s", msg.Error)
-	case llm.StopAborted:
-		return false, r.ctx.Err()
-	case llm.StopToolUse:
+	if msg.StopReason == llm.StopToolUse {
 		return false, r.tools(t, msg)
-	default: // stop, length
-		return true, nil
 	}
+	return true, nil // stop, length
 }
 
 // tools runs every tool call in one assistant message and appends a

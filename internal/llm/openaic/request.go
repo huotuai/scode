@@ -197,7 +197,13 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 				wm.Content = strings.Join(text, "\n")
 			}
 			if wm.Content == nil && len(wm.ToolCalls) == 0 && wm.Reasoning == "" {
-				return nil, fmt.Errorf("assistant message %d has no wireable content", i)
+				if m.Error == "" {
+					return nil, fmt.Errorf("assistant message %d has no wireable content", i)
+				}
+				// Recorded failure turns (including legacy content-less
+				// ones) replay as plain text instead of poisoning the
+				// session.
+				wm.Content = "[turn failed: " + m.Error + "]"
 			}
 			wire = append(wire, wm)
 		case llm.RoleTool:

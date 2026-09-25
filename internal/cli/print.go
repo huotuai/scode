@@ -128,7 +128,7 @@ func (a *App) command(line string) (bool, error) {
 		fmt.Printf("sessions in %s:\n", a.Store.Root)
 		for _, id := range ids {
 			mark := ""
-			if id+"-r" == a.Sess.Header().ID {
+			if id == a.Sess.Header().ID {
 				mark = " *"
 			}
 			fmt.Println("  " + id + mark)

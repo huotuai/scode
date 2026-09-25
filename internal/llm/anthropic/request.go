@@ -154,7 +154,13 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 				blocks = append(blocks, convertOutgoingBlock(b))
 			}
 			if len(blocks) == 0 {
-				return nil, fmt.Errorf("assistant message %d has no wireable content", i)
+				if m.Error == "" {
+					return nil, fmt.Errorf("assistant message %d has no wireable content", i)
+				}
+				// Recorded failure turns (including legacy content-less
+				// ones) replay as plain text instead of poisoning the
+				// session.
+				blocks = []wireBlock{{Type: "text", Text: "[turn failed: " + m.Error + "]"}}
 			}
 			if n := len(wire); n > 0 && wire[n-1].Role == "assistant" {
 				wire[n-1].Content = append(wire[n-1].Content, blocks...)

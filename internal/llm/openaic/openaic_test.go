@@ -296,6 +296,30 @@ func TestBuildRequestThinkingWire(t *testing.T) {
 	}
 }
 
+// Recorded failure turns must replay as text — regression for the
+// session-poisoning bug.
+func TestBuildRequestErrorTurnReplaysAsText(t *testing.T) {
+	tr, err := llm.NormalizeContext(llm.Context{
+		SystemPrompt: "p",
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("go")}, TS: 1},
+			{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "quota"},
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("again")}, TS: 2},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := BuildRequest(model(), tr, llm.StreamOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// messages[0] is the system prompt here; the error turn is at [2].
+	if req.Messages[2].Content != "[turn failed: quota]" {
+		t.Fatalf("error turn wire shape = %+v", req.Messages[2])
+	}
+}
+
 func TestClampPromptCacheKey(t *testing.T) {
 	if got := ClampPromptCacheKey("short"); got != "short" {
 		t.Fatalf("got %q", got)

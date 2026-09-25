@@ -104,7 +104,9 @@ func Setup(opts Options) (*App, error) {
 			return nil, err
 		}
 		a.Tr = tr
-		sess, err := store.Create(rec.Header.ID+"-r", cwd, providerName, modelID)
+		// Continue appending to the ORIGINAL file: the id stays
+		// resumable forever and a.entries mirrors what is on disk.
+		sess, err := store.OpenForAppend(rec.Header.ID)
 		if err != nil {
 			return nil, err
 		}

@@ -85,6 +85,23 @@ func (s *Store) Create(id, cwd, provider, model string) (*Session, error) {
 	return &Session{Path: path, store: s, w: bufio.NewWriter(f), f: f, header: h}, nil
 }
 
+// OpenForAppend reopens an existing session file for continued
+// appending — the resume path. The file's history stays append-only and
+// self-contained: no continuation files are spun off, so any stored
+// session id remains resumable however many times it has been resumed.
+func (s *Store) OpenForAppend(id string) (*Session, error) {
+	rec, err := s.Load(id)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(s.Root, id+".jsonl")
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	return &Session{Path: path, store: s, w: bufio.NewWriter(f), f: f, header: rec.Header}, nil
+}
+
 // Session is an open append-only session file.
 type Session struct {
 	Path   string
