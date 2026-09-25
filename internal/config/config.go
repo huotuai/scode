@@ -41,9 +41,10 @@ func EnsureDir() (string, error) {
 // Settings mirrors settings.json (global). Fields stay minimal until the
 // CLI grows knobs; unknown keys round-trip untouched.
 type Settings struct {
-	DefaultProvider string                    `json:"defaultProvider,omitempty"` // anthropic | openai-compat
-	DefaultModel    string                    `json:"defaultModel,omitempty"`
-	Providers       map[string]ProviderConfig `json:"providers,omitempty"`
+	DefaultProvider  string                    `json:"defaultProvider,omitempty"` // anthropic | openai-compat
+	DefaultModel     string                    `json:"defaultModel,omitempty"`
+	CompactionTokens int                       `json:"compactionTokens,omitempty"` // 0 = default threshold, negative = disabled
+	Providers        map[string]ProviderConfig `json:"providers,omitempty"`
 }
 
 // ProviderConfig carries per-provider endpoint and model defaults.

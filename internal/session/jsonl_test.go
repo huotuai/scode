@@ -77,8 +77,8 @@ func TestSessionTruncatedTailTolerated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.Messages) != 2 {
-		t.Fatalf("messages = %d, want 2 (intact prefix)", len(rec.Messages))
+	if len(rec.Entries) != 2 {
+		t.Fatalf("entries = %d, want 2 (intact prefix)", len(rec.Entries))
 	}
 }
 

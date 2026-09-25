@@ -17,11 +17,17 @@
 - [x] M1 双协议 provider(Anthropic + OpenAI 兼容)
 - [x] M2 agent 循环 + 工具接口/钩子
 - [x] M3 核心工具集(read/write/edit/bash/grep/find/ls)
-- [x] M4 JSONL 会话 + 系统提示词(压缩/会话树待补)
+- [x] M4 JSONL 会话 + 系统提示词 + 压缩 + 读时投影
 - [x] M5 print 模式 + REPL
-- [ ] M4 后续:压缩、会话树、读时投影
 - [ ] M6 TUI(bubbletea)
 - [ ] M7 MCP + 更多 provider
+
+## 上下文管理(压缩)
+
+长会话自动压缩:投影上下文超过阈值(settings.json `compactionTokens`,默认 80k,负数关闭)时,
+后台发起一次性摘要调用(禁用缓存,不污染主对话缓存),落一条 compaction 标记到会话文件,
+并从**读时投影**重建 LLM 上下文——存储的历史永不改写,read/modified 文件清单跨代传递。
+`--resume` 从投影恢复。
 
 ## 使用
 

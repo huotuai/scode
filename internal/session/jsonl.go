@@ -97,7 +97,19 @@ type Session struct {
 
 // Append writes one message line and flushes.
 func (s *Session) Append(m llm.Message) error {
-	b, err := json.Marshal(m)
+	return s.AppendEntry(MsgEntry(m))
+}
+
+// AppendEntry writes one storage line (message or compaction marker)
+// and fsyncs — every entry is durable before the call returns.
+func (s *Session) AppendEntry(e Entry) error {
+	var b []byte
+	var err error
+	if e.Compaction != nil {
+		b, err = json.Marshal(e.Compaction)
+	} else {
+		b, err = json.Marshal(*e.Msg)
+	}
 	if err != nil {
 		return err
 	}
@@ -133,10 +145,23 @@ func (s *Session) Close() error {
 // Header returns the session's header.
 func (s *Session) Header() Header { return s.header }
 
-// Record couples a loaded session with its transcript.
+// Record couples a loaded session with its stored entries.
 type Record struct {
-	Header   Header
-	Messages []llm.Message
+	Header  Header
+	Entries []Entry
+}
+
+// Project computes the LLM context from the record's entries.
+func (r *Record) Project() []llm.Message { return Project(r.Entries) }
+
+// Transcript rebuilds the in-memory transcript from the projected
+// context (leading system message first).
+func (r *Record) Transcript() (*llm.Transcript, error) {
+	msgs := r.Project()
+	if len(msgs) == 0 {
+		return nil, fmt.Errorf("session has no messages")
+	}
+	return llm.NewTranscript(msgs[0], msgs[1:]...)
 }
 
 // Load reads a session file (used by --resume).
@@ -164,12 +189,12 @@ func (s *Store) Load(id string) (*Record, error) {
 			}
 			continue
 		}
-		var m llm.Message
-		if err := json.Unmarshal([]byte(line), &m); err != nil {
+		e, err := parseEntry(line)
+		if err != nil {
 			// Truncated tail after a crash: keep everything intact so far.
 			break
 		}
-		rec.Messages = append(rec.Messages, m)
+		rec.Entries = append(rec.Entries, e)
 	}
 	if first {
 		return nil, fmt.Errorf("empty session file %s", path)
@@ -177,12 +202,30 @@ func (s *Store) Load(id string) (*Record, error) {
 	return rec, sc.Err()
 }
 
-// Transcript rebuilds the in-memory transcript from the record.
-func (r *Record) Transcript() (*llm.Transcript, error) {
-	if len(r.Messages) == 0 {
-		return nil, fmt.Errorf("session has no messages")
+// parseEntry distinguishes compaction markers (top-level "kind":
+// "compaction" — a field llm.Message never has) from message lines.
+func parseEntry(line string) (Entry, error) {
+	var probe struct {
+		Kind string `json:"kind"`
 	}
-	return llm.NewTranscript(r.Messages[0], r.Messages[1:]...)
+	if err := json.Unmarshal([]byte(line), &probe); err != nil {
+		return Entry{}, err
+	}
+	if probe.Kind == "compaction" {
+		var c CompactionEntry
+		if err := json.Unmarshal([]byte(line), &c); err != nil {
+			return Entry{}, err
+		}
+		return Entry{Compaction: &c}, nil
+	}
+	var m llm.Message
+	if err := json.Unmarshal([]byte(line), &m); err != nil {
+		return Entry{}, err
+	}
+	if m.Role == "" {
+		return Entry{}, fmt.Errorf("entry without role")
+	}
+	return Entry{Msg: &m}, nil
 }
 
 // List returns available session ids, newest first.
