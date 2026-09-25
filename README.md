@@ -14,9 +14,9 @@
 ## 里程碑
 
 - [x] M0 消息模型 + 前缀稳定性测试
-- [ ] M1 双协议 provider(Anthropic + OpenAI 兼容)
-- [ ] M2 agent 循环 + 工具接口/钩子
-- [ ] M3 核心工具集(read/write/edit/bash/grep/find/ls)
+- [x] M1 双协议 provider(Anthropic + OpenAI 兼容)
+- [x] M2 agent 循环 + 工具接口/钩子
+- [x] M3 核心工具集(read/write/edit/bash/grep/find/ls)
 - [ ] M4 JSONL 会话 + 投影 + 系统提示词 + 压缩
 - [ ] M5 print 模式 + REPL
 - [ ] M6 TUI(bubbletea)
