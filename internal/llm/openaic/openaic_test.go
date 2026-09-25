@@ -59,8 +59,18 @@ func TestBuildRequestShape(t *testing.T) {
 	if len(asst.ToolCalls) != 1 || asst.ToolCalls[0].ID != "call_1" {
 		t.Fatalf("assistant tool_calls = %+v", asst.ToolCalls)
 	}
-	if fn := asst.ToolCalls[0].Function; fn.Name != "bash" || string(mustJSON(fn.Parameters)) != `{"command":"ls"}` {
+	// Wire truth: tool calls carry "arguments" as a JSON string —
+	// regression test for the parameters/arguments conflation that strict
+	// endpoints reject with 422.
+	if fn := asst.ToolCalls[0].Function; fn.Name != "bash" || fn.Arguments != `{"command":"ls"}` {
 		t.Fatalf("function = %+v", fn)
+	}
+	wireJSON := mustJSON(req.Messages)
+	if !strings.Contains(string(wireJSON), `"arguments":"{\"command\":\"ls\"}"`) {
+		t.Fatalf("wire JSON lacks string arguments field: %s", wireJSON)
+	}
+	if strings.Contains(string(wireJSON), `"parameters"`) {
+		t.Fatalf("tool-call replay must not use parameters: %s", wireJSON)
 	}
 	tool := req.Messages[3]
 	if tool.Role != "tool" || tool.ToolCallID != "call_1" || tool.Content != "a.txt" {
@@ -77,6 +87,26 @@ func TestBuildRequestShape(t *testing.T) {
 func mustJSON(v any) []byte {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+func TestBuildRequestToolCallEmptyArguments(t *testing.T) {
+	tr, err := llm.NormalizeContext(llm.Context{
+		SystemPrompt: "p",
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("go")}, TS: 1},
+			{Role: llm.RoleAssistant, TS: 2, Content: []llm.Block{llm.ToolCallBlock("c1", "ls")}}, // no arguments
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := BuildRequest(model(), tr, llm.StreamOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := req.Messages[2].ToolCalls[0].Function.Arguments; got != "{}" {
+		t.Fatalf("empty arguments = %q, want {}", got)
+	}
 }
 
 func TestBuildRequestPromptCacheKey(t *testing.T) {

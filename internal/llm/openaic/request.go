@@ -4,6 +4,7 @@
 package openaic
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -33,10 +34,20 @@ type wireFunction struct {
 }
 
 type wireToolCall struct {
-	Index    int          `json:"-"` // response-side only
-	ID       string       `json:"id,omitempty"`
-	Type     string       `json:"type,omitempty"` // "function"
-	Function wireFunction `json:"function"`
+	Index    int                  `json:"-"` // response-side only
+	ID       string               `json:"id,omitempty"`
+	Type     string               `json:"type,omitempty"` // "function"
+	Function wireToolCallFunction `json:"function"`
+}
+
+// wireToolCallFunction is the tool-call half of the protocol: assistant
+// replay carries the arguments as a JSON-encoded STRING under
+// "arguments" — not the schema-style "parameters" used by tool
+// declarations. Conflating the two desyncs strict endpoints (422
+// missing field `arguments`).
+type wireToolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 type wireMessage struct {
@@ -73,6 +84,25 @@ type wireRequest struct {
 	PromptCacheKey  string             `json:"prompt_cache_key,omitempty"`
 	ReasoningEffort string             `json:"reasoning_effort,omitempty"` // OpenAI-style low|medium|high
 	Thinking        *wireZhipuThinking `json:"thinking,omitempty"`         // Zhipu-style enabled/disabled
+}
+
+// compactJSONString normalizes raw tool-call arguments into a compact
+// JSON string for the wire ("arguments" is a string field); anything
+// unparseable falls back to an empty object.
+func compactJSONString(raw json.RawMessage) string {
+	s := string(bytes.TrimSpace(raw))
+	if s == "" {
+		return "{}"
+	}
+	var v any
+	if err := json.Unmarshal([]byte(s), &v); err != nil {
+		return "{}"
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 // applyThinkingWire maps the neutral ThinkingLevel onto the endpoint's
@@ -155,14 +185,11 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 				case llm.BlockThinking:
 					wm.Reasoning = b.Text
 				case llm.BlockToolCall:
-					args := string(b.Arguments)
-					if args == "" {
-						args = "{}"
-					}
+					args := compactJSONString(b.Arguments)
 					wm.ToolCalls = append(wm.ToolCalls, wireToolCall{
 						ID:       b.ID,
 						Type:     "function",
-						Function: wireFunction{Name: b.Name, Parameters: json.RawMessage(args)},
+						Function: wireToolCallFunction{Name: b.Name, Arguments: args},
 					})
 				}
 			}
