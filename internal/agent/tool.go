@@ -17,9 +17,9 @@ import (
 // session facts pi exposes to shell commands (SCODE_MODEL & co) so tools
 // can forward them without touching the system prompt (cache rule 4).
 type ToolContext struct {
-	Ctx  context.Context
-	Env  map[string]string
-	CWD  string
+	Ctx context.Context
+	Env map[string]string
+	CWD string
 }
 
 // ToolResult is the outcome of one tool execution. Content carries the
