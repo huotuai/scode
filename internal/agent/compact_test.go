@@ -115,6 +115,17 @@ func TestCompactProviderErrorPropagates(t *testing.T) {
 	}
 }
 
+func TestCompactLengthStopRejected(t *testing.T) {
+	p := &optsProvider{reply: llm.Message{
+		Role: llm.RoleAssistant, StopReason: llm.StopLength,
+		Content: []llm.Block{llm.TextBlock("truncated summar")},
+	}}
+	a := New(Config{Provider: p, Model: llm.Model{ID: "m"}})
+	if _, _, err := a.Compact(context.Background(), compactTranscript(t), session.FileOps{}); err == nil {
+		t.Fatal("length-stopped summaries must be rejected, not persisted as checkpoints")
+	}
+}
+
 func TestCompactEmptySummaryRejected(t *testing.T) {
 	p := &optsProvider{reply: llm.Message{Role: llm.RoleAssistant, StopReason: llm.StopEndTurn, Content: []llm.Block{llm.TextBlock("   ")}}}
 	a := New(Config{Provider: p, Model: llm.Model{ID: "m"}})

@@ -110,6 +110,7 @@ func (p *Provider) Stream(ctx context.Context, model llm.Model, t *llm.Transcrip
 func (p *Provider) pump(ctx context.Context, r io.Reader, model string, out chan<- llm.Event) {
 	asm := newAssembler(model)
 	debug := os.Getenv("SCODE_DEBUG_SSE") == "1"
+	sawTerminal := false
 	err := llm.ReadSSE(r, func(ev llm.SSEEvent) error {
 		if debug {
 			fmt.Fprintf(os.Stderr, "[scode] sse: %s\n", ev.Data)
@@ -126,10 +127,15 @@ func (p *Provider) pump(ctx context.Context, r io.Reader, model string, out chan
 			return err
 		}
 		if terminal {
+			sawTerminal = true
 			return io.EOF
 		}
 		return nil
 	})
+	if err == nil && !sawTerminal {
+		// EOF before [DONE]/error: synthesize the promised terminal.
+		err = fmt.Errorf("stream ended before a terminal event")
+	}
 	if err != nil && err != io.EOF {
 		msg := asm.snapshot()
 		msg.StopReason = llm.StopError
@@ -139,7 +145,10 @@ func (p *Provider) pump(ctx context.Context, r io.Reader, model string, out chan
 		} else {
 			msg.Error = err.Error()
 		}
-		out <- llm.Event{Type: llm.EventError, Message: &msg, Reason: msg.StopReason, Err: err}
+		select {
+		case out <- llm.Event{Type: llm.EventError, Message: &msg, Reason: msg.StopReason, Err: err}:
+		case <-ctx.Done():
+		}
 	}
 }
 

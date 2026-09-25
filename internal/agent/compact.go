@@ -45,9 +45,12 @@ func (a *Agent) Compact(ctx context.Context, t *llm.Transcript, prev session.Fil
 			final = ev.Message
 		}
 	}
-	if final == nil || final.StopReason == llm.StopError {
+	if final == nil || final.StopReason == llm.StopError || final.StopReason == llm.StopLength {
+		// Length-stopped summaries are truncated text — persisting one
+		// as the checkpoint would silently discard context (pi rejects
+		// them too).
 		if final != nil {
-			return "", prev, fmt.Errorf("summarization failed: %s", final.Error)
+			return "", prev, fmt.Errorf("summarization failed: %s (%s)", final.Error, final.StopReason)
 		}
 		return "", prev, fmt.Errorf("summarization stream ended without a terminal event")
 	}

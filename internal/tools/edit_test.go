@@ -166,6 +166,26 @@ func TestApplyEditsFuzzyMultiLineWidth(t *testing.T) {
 	}
 }
 
+func TestEditToolPreservesBOM(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bom.txt")
+	os.WriteFile(path, []byte("\uFEFFalpha beta\n"), 0o644) //nolint:errcheck
+	res := (EditTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{
+		"path":  "bom.txt",
+		"edits": []any{map[string]any{"oldText": "alpha", "newText": "gamma"}},
+	}))
+	if res.IsError {
+		t.Fatalf("edit failed: %s", blockText(res))
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.HasPrefix(string(data), "\uFEFF") {
+		t.Fatal("BOM lost")
+	}
+	if !strings.Contains(string(data), "gamma") {
+		t.Fatal("edit not applied")
+	}
+}
+
 func TestDetectAndRestoreLineEndings(t *testing.T) {
 	crlf := "a\r\nb\r\n"
 	le := detectLineEnding(crlf)

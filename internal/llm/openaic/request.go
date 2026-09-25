@@ -74,16 +74,17 @@ type wireZhipuThinking struct {
 }
 
 type wireRequest struct {
-	Model           string             `json:"model"`
-	Stream          bool               `json:"stream"`
-	StreamOptions   *wireStreamOptions `json:"stream_options,omitempty"`
-	Messages        []wireMessage      `json:"messages"`
-	Tools           []wireTool         `json:"tools,omitempty"`
-	MaxTokens       int                `json:"max_tokens,omitempty"`
-	Temperature     *float64           `json:"temperature,omitempty"`
-	PromptCacheKey  string             `json:"prompt_cache_key,omitempty"`
-	ReasoningEffort string             `json:"reasoning_effort,omitempty"` // OpenAI-style low|medium|high
-	Thinking        *wireZhipuThinking `json:"thinking,omitempty"`         // Zhipu-style enabled/disabled
+	Model               string             `json:"model"`
+	Stream              bool               `json:"stream"`
+	StreamOptions       *wireStreamOptions `json:"stream_options,omitempty"`
+	Messages            []wireMessage      `json:"messages"`
+	Tools               []wireTool         `json:"tools,omitempty"`
+	MaxTokens           int                `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int                `json:"max_completion_tokens,omitempty"`
+	Temperature         *float64           `json:"temperature,omitempty"`
+	PromptCacheKey      string             `json:"prompt_cache_key,omitempty"`
+	ReasoningEffort     string             `json:"reasoning_effort,omitempty"` // OpenAI-style low|medium|high
+	Thinking            *wireZhipuThinking `json:"thinking,omitempty"`         // Zhipu-style enabled/disabled
 }
 
 // compactJSONString normalizes raw tool-call arguments into a compact
@@ -165,6 +166,9 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 			for _, b := range m.Content {
 				switch b.Kind {
 				case llm.BlockText:
+					if b.Text == "" {
+						continue
+					}
 					parts = append(parts, wireContent{Type: "text", Text: b.Text})
 				case llm.BlockImage:
 					parts = append(parts, wireContent{Type: "image_url", ImageURL: &wireImageURL{URL: "data:" + b.MimeType + ";base64," + b.Data}})
@@ -220,6 +224,9 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 					}
 				}
 				body := strings.Join(parts, "\n")
+				if strings.TrimSpace(body) == "" {
+					body = "(no output)"
+				}
 				if b.IsError && body != "" && !strings.HasPrefix(body, "ERROR") {
 					body = "ERROR: " + body
 				}
@@ -252,6 +259,12 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 	}
 	if req.MaxTokens == 0 {
 		req.MaxTokens = 8192
+	}
+	// OpenAI proper rejects max_tokens on reasoning models; relays
+	// (GLM/DeepSeek/…) universally expect it.
+	if strings.Contains(strings.ToLower(opts.BaseURL), "api.openai.com") {
+		req.MaxCompletionTokens = req.MaxTokens
+		req.MaxTokens = 0
 	}
 	if opts.Temperature != 0 {
 		req.Temperature = &opts.Temperature

@@ -147,6 +147,9 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 			role := "user"
 			var blocks []wireBlock
 			for _, b := range m.Content {
+				if b.Kind == llm.BlockText && b.Text == "" {
+					continue // the API rejects empty text blocks
+				}
 				wb := convertOutgoingBlock(b)
 				if b.Kind == llm.BlockToolResult && b.ID != "" {
 					delete(pending, b.ID)
@@ -161,6 +164,9 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 		case llm.RoleAssistant:
 			var blocks []wireBlock
 			for _, b := range m.Content {
+				if b.Kind == llm.BlockText && b.Text == "" {
+					continue // the API rejects empty text blocks
+				}
 				wb := convertOutgoingBlock(b)
 				if b.Kind == llm.BlockToolCall && b.ID != "" {
 					if !pending[b.ID] {
@@ -268,10 +274,16 @@ func convertOutgoingBlock(b llm.Block) wireBlock {
 	case llm.BlockToolResult:
 		var content []wireBlock
 		for _, nb := range b.Content {
+			if nb.Kind == llm.BlockText && nb.Text == "" {
+				continue
+			}
 			content = append(content, convertOutgoingBlock(nb))
 		}
 		if len(content) == 0 && b.Text != "" {
 			content = []wireBlock{{Type: "text", Text: b.Text}}
+		}
+		if len(content) == 0 {
+			content = []wireBlock{{Type: "text", Text: "(no output)"}}
 		}
 		return wireBlock{Type: "tool_result", ToolUseID: b.ID, Content: content, IsError: b.IsError}
 	case llm.BlockImage:

@@ -199,7 +199,7 @@ func (a *assembler) handle(data string) ([]llm.Event, bool, error) {
 		}
 		if ch.FinishReason != nil && *ch.FinishReason != "" {
 			switch *ch.FinishReason {
-			case "network_error", "error":
+			case "network_error", "error", "content_filter":
 				a.err = fmt.Sprintf("provider reported finish_reason=%s", *ch.FinishReason)
 			default:
 				a.finished = *ch.FinishReason

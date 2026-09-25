@@ -92,13 +92,17 @@ func (EditTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.ToolRe
 		}
 		original := string(data)
 		le := detectLineEnding(original)
+		bom := ""
+		if strings.HasPrefix(original, "\uFEFF") {
+			bom = "\uFEFF" // preserve; normalizeToLF strips it
+		}
 		content := normalizeToLF(original)
 
 		out, err := applyEdits(content, edits)
 		if err != nil {
 			return err
 		}
-		final := restoreLineEndings(out, le)
+		final := bom + restoreLineEndings(out, le)
 		if err := os.WriteFile(full, []byte(final), 0o644); err != nil {
 			return err
 		}

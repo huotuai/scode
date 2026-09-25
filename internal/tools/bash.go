@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -128,9 +127,11 @@ func (BashTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.ToolRe
 	cmd.Env = env
 	prepareProcess(cmd)
 
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
+	// Bounded rolling tail: a command emitting gigabytes must not OOM
+	// the agent (pi's OutputAccumulator discipline).
+	out := &tailBuffer{cap: 1 << 20}
+	cmd.Stdout = out
+	cmd.Stderr = out
 
 	if err := cmd.Start(); err != nil {
 		return agent.ErrorResult(fmt.Sprintf("failed to start shell: %v", err))
@@ -140,11 +141,28 @@ func (BashTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.ToolRe
 		timedOut.Store(true)
 		killProcessTree(cmd)
 	})
+	// Cancellation (Ctrl-C / abort) kills the tree too — a runaway
+	// command must not outlive its turn.
+	var aborted atomic.Bool
+	quit := make(chan struct{})
+	defer close(quit)
+	if tc.Ctx != nil {
+		go func() {
+			select {
+			case <-tc.Ctx.Done():
+				aborted.Store(true)
+				killProcessTree(cmd)
+			case <-quit:
+			}
+		}()
+	}
 	waitErr := cmd.Wait()
 	timer.Stop()
 
 	output := out.String()
 	switch {
+	case aborted.Load():
+		return agent.ErrorResult(tailOutput(output) + "\nCommand aborted")
 	case timedOut.Load():
 		return agent.ErrorResult(tailOutput(output) + fmt.Sprintf("\nCommand timed out after %d seconds", int(timeout.Seconds())))
 	case waitErr != nil:
@@ -157,6 +175,22 @@ func (BashTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.ToolRe
 		return agent.TextResult(tailOutput(output))
 	}
 }
+
+// tailBuffer keeps only the last cap bytes written to it.
+type tailBuffer struct {
+	b   []byte
+	cap int
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	t.b = append(t.b, p...)
+	if len(t.b) > t.cap {
+		t.b = t.b[len(t.b)-t.cap:]
+	}
+	return len(p), nil
+}
+
+func (t *tailBuffer) String() string { return string(t.b) }
 
 // tailOutput tail-truncates shell output (errors live at the end) and
 // spills the full output to a temp file when cut.

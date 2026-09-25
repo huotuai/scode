@@ -3,6 +3,7 @@ package anthropic
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"scode/internal/llm"
 )
@@ -96,16 +97,34 @@ func (a *assembler) snapshot() llm.Message {
 	for _, lb := range a.ordered() {
 		b := lb.block
 		if b.Kind == llm.BlockToolCall {
-			b.Arguments = json.RawMessage(lb.partialJSON)
-			if len(b.Arguments) == 0 {
-				b.Arguments = json.RawMessage(`{}`)
-			}
+			args := compactArgs(lb.partialJSON)
+			b.Arguments = args
 		}
 		out.Content = append(out.Content, b)
 	}
 	out.StopReason = a.msg.StopReason
 	out.Error = a.msg.Error
 	return out
+}
+
+// compactArgs normalizes accumulated tool-call argument fragments. An
+// incomplete stream can leave invalid JSON (abort mid-args, proxy
+// truncation); falling back to {} keeps the persisted message replayable
+// instead of poisoning the transcript with corrupt tool_use input.
+func compactArgs(partial string) json.RawMessage {
+	s := strings.TrimSpace(partial)
+	if s == "" {
+		return json.RawMessage(`{}`)
+	}
+	var v any
+	if err := json.Unmarshal([]byte(s), &v); err != nil {
+		return json.RawMessage(`{}`)
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return b
 }
 
 func (a *assembler) ordered() []*liveBlock {
@@ -217,6 +236,9 @@ func (a *assembler) handle(name, data string) ([]llm.Event, bool, error) {
 		}
 		a.usage.Output = md.Usage.OutputTokens
 		a.msg.StopReason = mapStopReason(md.Delta.StopReason)
+		if a.msg.StopReason == llm.StopError {
+			a.msg.Error = "provider stopped with reason " + md.Delta.StopReason
+		}
 		return nil, false, nil
 
 	case "message_stop":
@@ -240,12 +262,17 @@ func (a *assembler) handle(name, data string) ([]llm.Event, bool, error) {
 
 func mapStopReason(r string) llm.StopReason {
 	switch r {
-	case "end_turn":
+	case "end_turn", "stop_sequence", "pause_turn":
+		// pause_turn/stop_sequence are normal completions for this loop
+		// (pi resubmits pause_turn; end-of-turn is the safe subset).
 		return llm.StopEndTurn
 	case "max_tokens":
 		return llm.StopLength
 	case "tool_use":
 		return llm.StopToolUse
+	case "refusal", "sensitive":
+		// Refusals must not persist as successful completions.
+		return llm.StopError
 	case "":
 		return ""
 	default:

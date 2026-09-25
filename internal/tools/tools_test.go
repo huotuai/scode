@@ -1,11 +1,13 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"scode/internal/agent"
 )
@@ -290,6 +292,43 @@ func TestBashToolEnv(t *testing.T) {
 	if text := blockText(res); !strings.Contains(text, "42") {
 		t.Fatalf("env not passed: %q", text)
 	}
+}
+
+func TestGrepToolContextLineFormat(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "f.txt"), []byte("head\nMATCH\nfoot\n"), 0o644) //nolint:errcheck
+	res := (GrepTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{
+		"pattern": "MATCH", "context": 1,
+	}))
+	if res.IsError {
+		t.Fatal(blockText(res))
+	}
+	text := blockText(res)
+	// Match: path:line: / context: path-line- (grep convention).
+	if !strings.Contains(text, "f.txt:2: MATCH") {
+		t.Fatalf("match line format wrong: %q", text)
+	}
+	if !strings.Contains(text, "f.txt-1- head") || !strings.Contains(text, "f.txt-3- foot") {
+		t.Fatalf("context line format wrong: %q", text)
+	}
+}
+
+func TestBashToolCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		cancel()
+	}()
+	res := (BashTool{}).Execute(agent.ToolContext{CWD: t.TempDir(), Ctx: ctx}, mustArgs(t, map[string]any{
+		"command": "sleep 30",
+	}))
+	if res.IsError {
+		if strings.Contains(blockText(res), "aborted") {
+			return // expected
+		}
+		t.Skipf("no bash: %s", blockText(res))
+	}
+	t.Fatal("cancel must abort the command")
 }
 
 func TestIgnoreMatcher(t *testing.T) {

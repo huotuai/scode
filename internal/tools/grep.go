@@ -183,11 +183,14 @@ func scanFile(path, display string, re *regexp.Regexp, context, budget int, add 
 			if c < 0 || c >= len(lines) || !shown[c] {
 				continue
 			}
-			marker := " "
+			// Match lines read "path:line: text"; context lines read
+			// "path-line- text" (grep convention — the separator tells
+			// matches from context).
 			if c == i {
-				marker = ">"
+				sb.WriteString(fmt.Sprintf("> %s:%d: %s\n", display, c+1, ClampLine(lines[c])))
+			} else {
+				sb.WriteString(fmt.Sprintf("  %s-%d- %s\n", display, c+1, ClampLine(lines[c])))
 			}
-			sb.WriteString(fmt.Sprintf("%s %s:%d: %s\n", marker, display, c+1, ClampLine(lines[c])))
 		}
 		add(grepHit{strings.TrimRight(sb.String(), "\n")})
 	}

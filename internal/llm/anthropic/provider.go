@@ -113,6 +113,7 @@ func (p *Provider) post(ctx context.Context, key string, body []byte) (*http.Res
 // surfaces as an aborted error event.
 func pump(ctx context.Context, r io.Reader, model string, out chan<- llm.Event) {
 	asm := newAssembler(model)
+	sawTerminal := false
 	err := llm.ReadSSE(r, func(ev llm.SSEEvent) error {
 		events, terminal, err := asm.handle(ev.Name, ev.Data)
 		for _, e := range events {
@@ -126,10 +127,16 @@ func pump(ctx context.Context, r io.Reader, model string, out chan<- llm.Event) 
 			return err
 		}
 		if terminal {
+			sawTerminal = true
 			return io.EOF // stop reading; message_stop / error reached
 		}
 		return nil
 	})
+	if err == nil && !sawTerminal {
+		// EOF before message_stop/error (proxy truncation): synthesize
+		// the terminal the stream contract promises.
+		err = fmt.Errorf("anthropic stream ended before a terminal event")
+	}
 	if err != nil && err != io.EOF {
 		msg := asm.snapshot()
 		msg.StopReason = llm.StopError
@@ -139,7 +146,10 @@ func pump(ctx context.Context, r io.Reader, model string, out chan<- llm.Event) 
 		} else {
 			msg.Error = err.Error()
 		}
-		out <- llm.Event{Type: llm.EventError, Message: &msg, Reason: msg.StopReason, Err: err}
+		select {
+		case out <- llm.Event{Type: llm.EventError, Message: &msg, Reason: msg.StopReason, Err: err}:
+		case <-ctx.Done():
+		}
 	}
 }
 
