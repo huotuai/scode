@@ -276,6 +276,55 @@ func TestLoopProviderErrorRetried(t *testing.T) {
 	}
 }
 
+// A length-truncated turn carrying tool calls must be answered with
+// error results so the transcript stays valid and the model recovers.
+func TestLoopLengthTruncatedToolCallsRecovered(t *testing.T) {
+	p := &scriptedProvider{script: []llm.Message{
+		{
+			Role: llm.RoleAssistant, StopReason: llm.StopLength,
+			Content: []llm.Block{{Kind: llm.BlockToolCall, ID: "c1", Name: "echo", Arguments: json.RawMessage(`{"text":"maybe-trunca`)}},
+		},
+		{Role: llm.RoleAssistant, StopReason: llm.StopEndTurn, Content: []llm.Block{llm.TextBlock("re-issued and done")}},
+	}}
+	echo := &echoTool{}
+	a := newTestAgent(p, echo)
+	tr, _ := a.NewSession("t")
+	events, runErr := collect(t, a, tr, "go")
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	// The model saw an error result for the truncated call and continued.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.streams) != 2 {
+		t.Fatalf("provider calls = %d, want 2", len(p.streams))
+	}
+	var sawErrResult bool
+	for _, m := range p.streams[1].Messages() {
+		for _, b := range m.Content {
+			if b.Kind == llm.BlockToolResult && b.IsError && strings.Contains(b.Content[0].Text, "truncated") {
+				sawErrResult = true
+			}
+		}
+	}
+	if !sawErrResult {
+		t.Fatal("no error tool result fed back after length truncation")
+	}
+	if len(echo.calls) != 0 {
+		t.Fatal("truncated call must not execute")
+	}
+	// Loop continued to a clean stop.
+	var last string
+	for _, ev := range events {
+		if ev.Type == EvAssistant && ev.Message != nil {
+			last = ev.Message.Content[0].Text
+		}
+	}
+	if last != "re-issued and done" {
+		t.Fatalf("final = %q", last)
+	}
+}
+
 func TestLoopBeforeHookBlocks(t *testing.T) {
 	p := &scriptedProvider{script: []llm.Message{
 		{

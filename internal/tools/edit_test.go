@@ -128,6 +128,44 @@ func TestApplyEditsMultiLineFuzzyPreservesUnmatched(t *testing.T) {
 	}
 }
 
+// The exact bug the audit found: an earlier smart quote on the same line
+// shifts normalized offsets — the old byte back-mapping spliced the
+// wrong position. Line-widened replacement must keep the prefix intact
+// (in normalized form) instead of corrupting adjacent bytes.
+func TestApplyEditsSmartQuoteEarlierInLine(t *testing.T) {
+	// oldText uses ASCII quotes where the file has smart quotes, so the
+	// match necessarily goes through the fuzzy path; the earlier smart
+	// quote in “start” is what used to shift the offsets.
+	content := "label = “start” value = “x” end   \nnext = 2\n"
+	out, err := applyEdits(content, []editRequest{edit(`value = "x" end`, `value = "y" end`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `value = "y" end`) || !strings.Contains(out, "next = 2") {
+		t.Fatalf("out = %q", out)
+	}
+	// The untouched prefix survives (normalized: smart quotes folded).
+	if !strings.HasPrefix(out, `label = "start" value = "y" end`) {
+		t.Fatalf("prefix corrupted: %q", out)
+	}
+	if !strings.HasSuffix(out, "next = 2\n") {
+		t.Fatalf("suffix corrupted: %q", out)
+	}
+}
+
+// Fuzzy match spanning multiple lines replaces the touched lines while
+// lines outside the window stay byte-exact.
+func TestApplyEditsFuzzyMultiLineWidth(t *testing.T) {
+	content := "keep0\nold a   \nold b\nkeep3\n"
+	out, err := applyEdits(content, []editRequest{edit("old a\nold b", "new a\nnew b")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "keep0\nnew a\nnew b\nkeep3\n" {
+		t.Fatalf("out = %q", out)
+	}
+}
+
 func TestDetectAndRestoreLineEndings(t *testing.T) {
 	crlf := "a\r\nb\r\n"
 	le := detectLineEnding(crlf)

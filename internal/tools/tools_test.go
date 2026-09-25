@@ -115,6 +115,53 @@ func TestLsTool(t *testing.T) {
 	}
 }
 
+func TestFindToolGlobBasenameSemantics(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "a", "b"), 0o755)                          //nolint:errcheck
+	os.WriteFile(filepath.Join(dir, "root.go"), []byte("x"), 0o644)           //nolint:errcheck
+	os.WriteFile(filepath.Join(dir, "a", "mid.go"), []byte("x"), 0o644)       //nolint:errcheck
+	os.WriteFile(filepath.Join(dir, "a", "b", "deep.go"), []byte("x"), 0o644) //nolint:errcheck
+	os.WriteFile(filepath.Join(dir, "skip.txt"), []byte("x"), 0o644)          //nolint:errcheck
+
+	// Slash-free globs match at ANY depth (rg/fd convention).
+	res := (FindTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{"pattern": "*.go"}))
+	if res.IsError {
+		t.Fatal(blockText(res))
+	}
+	text := blockText(res)
+	for _, want := range []string{"root.go", "a/mid.go", "a/b/deep.go"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("pattern *.go missed %q: %q", want, text)
+		}
+	}
+	// Patterns with "/" stay full-path.
+	res = (FindTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{"pattern": "a/*.go"}))
+	if res.IsError {
+		t.Fatal(blockText(res))
+	}
+	text = blockText(res)
+	if !strings.Contains(text, "a/mid.go") || strings.Contains(text, "root.go") || strings.Contains(text, "deep.go") {
+		t.Fatalf("anchored pattern wrong: %q", text)
+	}
+}
+
+func TestGrepToolGlobBasename(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "sub"), 0o755)                                   //nolint:errcheck
+	os.WriteFile(filepath.Join(dir, "root.go"), []byte("target\n"), 0o644)          //nolint:errcheck
+	os.WriteFile(filepath.Join(dir, "sub", "nested.go"), []byte("target\n"), 0o644) //nolint:errcheck
+	res := (GrepTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{
+		"pattern": "target", "glob": "*.go",
+	}))
+	if res.IsError {
+		t.Fatal(blockText(res))
+	}
+	text := blockText(res)
+	if !strings.Contains(text, "root.go:1") || !strings.Contains(text, "sub/nested.go:1") {
+		t.Fatalf("glob *.go missed nested files: %q", text)
+	}
+}
+
 func TestFindToolGlobAndGitignore(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "src", "inner"), 0o755)                              //nolint:errcheck

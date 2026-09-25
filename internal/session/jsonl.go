@@ -89,17 +89,43 @@ func (s *Store) Create(id, cwd, provider, model string) (*Session, error) {
 // appending — the resume path. The file's history stays append-only and
 // self-contained: no continuation files are spun off, so any stored
 // session id remains resumable however many times it has been resumed.
+// A crash-truncated final line (no trailing newline) is repaired with a
+// newline before any append lands — otherwise the first new entry would
+// merge into the torn fragment and doom every later entry on load.
 func (s *Store) OpenForAppend(id string) (*Session, error) {
 	rec, err := s.Load(id)
 	if err != nil {
 		return nil, err
 	}
 	path := filepath.Join(s.Root, id+".jsonl")
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
+	// O_RDWR (not O_WRONLY): repairTornTail reads the last byte, and
+	// Windows denies reads on write-only handles.
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err
 	}
+	if err := repairTornTail(f); err != nil {
+		f.Close()
+		return nil, err
+	}
 	return &Session{Path: path, store: s, w: bufio.NewWriter(f), f: f, header: rec.Header}, nil
+}
+
+// repairTornTail appends a newline when the file does not end in one.
+func repairTornTail(f *os.File) error {
+	info, err := f.Stat()
+	if err != nil || info.Size() == 0 {
+		return err
+	}
+	var last [1]byte
+	if _, err := f.ReadAt(last[:], info.Size()-1); err != nil {
+		return err
+	}
+	if last[0] == '\n' {
+		return nil
+	}
+	_, err = f.Write([]byte{'\n'})
+	return err
 }
 
 // Session is an open append-only session file.
@@ -208,8 +234,10 @@ func (s *Store) Load(id string) (*Record, error) {
 		}
 		e, err := parseEntry(line)
 		if err != nil {
-			// Truncated tail after a crash: keep everything intact so far.
-			break
+			// Skip malformed lines (crash-torn fragments, future formats)
+			// and keep loading — pi's loader does the same; a break here
+			// would discard every valid entry after one bad line.
+			continue
 		}
 		rec.Entries = append(rec.Entries, e)
 	}

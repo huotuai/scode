@@ -61,7 +61,8 @@ type wireTool struct {
 }
 
 type wireThinking struct {
-	BudgetTokens int `json:"budget_tokens"`
+	Type         string `json:"type"` // "enabled" — required by the API
+	BudgetTokens int    `json:"budget_tokens"`
 }
 
 type wireRequest struct {
@@ -131,7 +132,12 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 
 	// Messages: fold tool results into user messages, merge consecutive
 	// same-role messages (the API requires user/assistant alternation).
+	// tool_use ids without a matching tool_result are synthesized as error
+	// results — otherwise one aborted turn mid-tool bricks every later
+	// request with a 400 (pi's transform-messages does the same).
 	var wire []wireMessage
+	pending := map[string]bool{} // tool_use ids awaiting a result
+	var pendingOrder []string
 	for i := 1; i < len(msgs); i++ {
 		m := msgs[i]
 		switch m.Role {
@@ -141,7 +147,11 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 			role := "user"
 			var blocks []wireBlock
 			for _, b := range m.Content {
-				blocks = append(blocks, convertOutgoingBlock(b))
+				wb := convertOutgoingBlock(b)
+				if b.Kind == llm.BlockToolResult && b.ID != "" {
+					delete(pending, b.ID)
+				}
+				blocks = append(blocks, wb)
 			}
 			if n := len(wire); n > 0 && wire[n-1].Role == role {
 				wire[n-1].Content = append(wire[n-1].Content, blocks...)
@@ -151,7 +161,14 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 		case llm.RoleAssistant:
 			var blocks []wireBlock
 			for _, b := range m.Content {
-				blocks = append(blocks, convertOutgoingBlock(b))
+				wb := convertOutgoingBlock(b)
+				if b.Kind == llm.BlockToolCall && b.ID != "" {
+					if !pending[b.ID] {
+						pending[b.ID] = true
+						pendingOrder = append(pendingOrder, b.ID)
+					}
+				}
+				blocks = append(blocks, wb)
 			}
 			if len(blocks) == 0 {
 				if m.Error == "" {
@@ -173,6 +190,23 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 	}
 	if len(wire) == 0 {
 		return nil, fmt.Errorf("transcript has no conversation messages")
+	}
+	if len(pendingOrder) > 0 {
+		var synth []wireBlock
+		for _, id := range pendingOrder {
+			if !pending[id] {
+				continue
+			}
+			synth = append(synth, wireBlock{
+				Type:      "tool_result",
+				ToolUseID: id,
+				Content:   []wireBlock{{Type: "text", Text: "No result provided (the turn was interrupted)."}},
+				IsError:   true,
+			})
+		}
+		if len(synth) > 0 {
+			wire = append(wire, wireMessage{Role: "user", Content: synth})
+		}
 	}
 
 	// Breakpoint on the tail block of the last user message: conversation
@@ -209,7 +243,7 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 		if budget >= maxTokens {
 			return nil, fmt.Errorf("thinking budget %d must be below max_tokens %d", budget, maxTokens)
 		}
-		req.Thinking = &wireThinking{BudgetTokens: budget}
+		req.Thinking = &wireThinking{Type: "enabled", BudgetTokens: budget}
 		// The API rejects temperature alongside extended thinking.
 		req.Temperature = nil
 	} else if opts.Temperature != 0 {

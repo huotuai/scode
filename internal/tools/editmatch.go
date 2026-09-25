@@ -87,10 +87,11 @@ type editRequest struct {
 
 // locatedEdit is one edit with original-space replacement bounds.
 type locatedEdit struct {
-	edit  editRequest
-	fuzzy bool
-	start int // byte offset into the LF-normalized original content
-	end   int
+	edit        editRequest
+	fuzzy       bool
+	start       int // byte offset into the LF-normalized original content
+	end         int
+	replacement string // what gets spliced in (newText, or line-widened fuzzy form)
 }
 
 // findExact locates a unique exact occurrence.
@@ -108,13 +109,14 @@ func findExact(content, oldText string) (int, int, bool, error) {
 // lineMap converts offsets in normalized space to (line, offset-in-line)
 // using the original lines' normalized forms.
 type lineMap struct {
+	content   string
 	origLines []string
 	normLines []string
 	starts    []int // normalized-space start offset of each line
 }
 
 func buildLineMap(content string) *lineMap {
-	lm := &lineMap{origLines: strings.Split(content, "\n")}
+	lm := &lineMap{content: content, origLines: strings.Split(content, "\n")}
 	pos := 0
 	for _, l := range lm.origLines {
 		n := normalizeForFuzzyMatch(l)
@@ -126,33 +128,43 @@ func buildLineMap(content string) *lineMap {
 }
 
 // locate converts a normalized-space span to original-space bounds,
-// expanding to whole-line granularity while preserving the untouched
-// prefix of the first line and suffix of the last line.
-func (lm *lineMap) locate(spanStart, spanEnd int) (int, int) {
-	startLine, startOff := lm.lineOf(spanStart)
-	endLine, endOff := lm.lineOf(spanEnd)
-
-	// Original-space prefix: bytes of startLine before the match. The
-	// normalized offset equals the original offset unless normalization
-	// changed earlier bytes of the line (accepted rarity, documented).
-	prefixLen := clampInt(startOff, len(lm.origLines[startLine]))
-	start := lm.origStart(startLine) + prefixLen
-
-	// Original-space suffix of endLine after the match.
-	suffix := ""
-	if endLine < len(lm.origLines) {
-		off := clampInt(endOff, len(lm.origLines[endLine]))
-		suffix = lm.origLines[endLine][off:]
+// widened to whole touched lines (without consuming the final line's
+// newline). The untouched prefix/suffix of the touched lines carry over
+// in NORMALIZED form (pi's applyReplacementsPreservingUnchangedLines
+// trade-off): byte-offset back-mapping within a line is deliberately
+// avoided — an earlier smart quote or NFKC change on the same line would
+// shift normalized offsets and silently splice the wrong bytes.
+func (lm *lineMap) locate(spanStart, spanEnd int) (start, end int, prefix, suffix string) {
+	lo, relStart := lm.lineOf(spanStart)
+	hi, relEnd := lm.lineOf(spanEnd)
+	// A span ending exactly at a line start ends with the previous
+	// line's newline.
+	if hi > lo && relEnd == 0 {
+		hi--
+		relEnd = len(lm.normLines[hi])
 	}
-	end := lm.origStart(endLine) + len(lm.origLines[endLine]) - len(suffix)
-	return start, end
+	start = lm.origStart(lo)
+	end = lm.origStart(hi) + len(lm.origLines[hi])
+	if end > len(lm.content) {
+		end = len(lm.content)
+	}
+	prefix = clampPrefix(lm.normLines[lo], relStart)
+	suffix = clampSuffix(lm.normLines[hi], relEnd)
+	return start, end, prefix, suffix
 }
 
-func clampInt(n, max int) int {
-	if n > max {
-		return max
+func clampPrefix(s string, n int) string {
+	if n > len(s) {
+		return ""
 	}
-	return n
+	return s[:n]
+}
+
+func clampSuffix(s string, n int) string {
+	if n > len(s) {
+		return ""
+	}
+	return s[n:]
 }
 
 func (lm *lineMap) lineOf(normOffset int) (line, off int) {
@@ -174,8 +186,9 @@ func (lm *lineMap) origStart(line int) int {
 }
 
 // findFuzzy locates a unique fuzzy occurrence and converts it to
-// original-space bounds.
-func findFuzzy(content, oldText string) (start, end int, found bool, err error) {
+// line-widened original-space bounds, returning the normalized
+// prefix/suffix of the touched lines.
+func findFuzzy(content, oldText string) (start, end int, prefix, suffix string, found bool, err error) {
 	lm := buildLineMap(content)
 	var norm strings.Builder
 	for i, l := range lm.normLines {
@@ -198,12 +211,12 @@ func findFuzzy(content, oldText string) (start, end int, found bool, err error) 
 	}
 	switch len(hits) {
 	case 0:
-		return 0, 0, false, nil
+		return 0, 0, "", "", false, nil
 	case 1:
-		s, e := lm.locate(hits[0], hits[0]+len(nOld))
-		return s, e, true, nil
+		s, e, pre, suf := lm.locate(hits[0], hits[0]+len(nOld))
+		return s, e, pre, suf, true, nil
 	default:
-		return 0, 0, false, fmt.Errorf("oldText matches %d times after fuzzy normalization — provide more surrounding context", len(hits))
+		return 0, 0, "", "", false, fmt.Errorf("oldText matches %d times after fuzzy normalization — provide more surrounding context", len(hits))
 	}
 }
 
@@ -220,11 +233,16 @@ func applyEdits(content string, edits []editRequest) (string, error) {
 		if strings.TrimSpace(content) == "" && strings.TrimSpace(e.oldText) != "" {
 			return "", fmt.Errorf("file is empty; use the write tool to create content")
 		}
+		replacement := e.newText
 		start, end, found, err := findExact(content, e.oldText)
 		fuzzy := false
 		if !found && err == nil {
-			start, end, found, err = findFuzzy(content, e.oldText)
-			fuzzy = found
+			var prefix, suffix string
+			start, end, prefix, suffix, found, err = findFuzzy(content, e.oldText)
+			if found {
+				fuzzy = true
+				replacement = prefix + e.newText + suffix
+			}
 		}
 		if err != nil {
 			return "", err
@@ -232,7 +250,7 @@ func applyEdits(content string, edits []editRequest) (string, error) {
 		if !found {
 			return "", fmt.Errorf("oldText not found in file (after exact and fuzzy matching)")
 		}
-		located = append(located, locatedEdit{edit: e, fuzzy: fuzzy, start: start, end: end})
+		located = append(located, locatedEdit{edit: e, fuzzy: fuzzy, start: start, end: end, replacement: replacement})
 	}
 
 	sort.Slice(located, func(a, b int) bool { return located[a].start < located[b].start })
@@ -246,7 +264,7 @@ func applyEdits(content string, edits []editRequest) (string, error) {
 	out := content
 	for i := len(located) - 1; i >= 0; i-- {
 		a := located[i]
-		out = out[:a.start] + a.edit.newText + out[a.end:]
+		out = out[:a.start] + a.replacement + out[a.end:]
 	}
 	if out == content {
 		return "", fmt.Errorf("no changes made: new content is identical")

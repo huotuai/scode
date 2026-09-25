@@ -3,6 +3,7 @@ package tools
 import (
 	"bufio"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -12,6 +13,21 @@ import (
 // doublestarMatch shells out to the doublestar glob engine (** support).
 func doublestarMatch(pattern, name string) (bool, error) {
 	return doublestar.Match(pattern, name)
+}
+
+// MatchGlob applies rg/fd basename semantics: a slash-free pattern such
+// as "*.go" matches at ANY depth, not just the root (doublestar's "*"
+// does not cross "/"). Patterns containing "/" stay full-path.
+func MatchGlob(pattern, relSlash string) bool {
+	if ok, _ := doublestar.Match(pattern, relSlash); ok {
+		return true
+	}
+	if !strings.Contains(pattern, "/") {
+		if ok, _ := doublestar.Match(pattern, path.Base(relSlash)); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // ignoreMatcher applies .gitignore rules from the repo root: ordered

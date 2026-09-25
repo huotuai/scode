@@ -230,7 +230,40 @@ func (r *run) turn(t *llm.Transcript) (bool, error) {
 	if msg.StopReason == llm.StopToolUse {
 		return false, r.tools(t, msg)
 	}
-	return true, nil // stop, length
+	if msg.StopReason == llm.StopLength && hasToolCalls(msg) {
+		// Output ran out mid-tool-call: the arguments may be truncated.
+		// Answer every call with an error result so the transcript stays
+		// valid and the model can re-issue them (pi's
+		// failToolCallsFromTruncatedMessage) — otherwise the tail is an
+		// assistant message with unanswered calls that no provider
+		// accepts.
+		results := make([]llm.Block, 0, len(msg.Content))
+		for _, b := range msg.Content {
+			if b.Kind != llm.BlockToolCall {
+				continue
+			}
+			results = append(results, llm.Block{
+				Kind:    llm.BlockToolResult,
+				ID:      b.ID,
+				Content: []llm.Block{llm.TextBlock("The turn hit the output-token limit; the tool arguments may be truncated. Re-issue the tool call.")},
+				IsError: true,
+			})
+		}
+		if err := t.AppendNow(llm.Message{Role: llm.RoleTool, Content: results}); err != nil {
+			return false, err
+		}
+		return false, nil // continue the loop; the model recovers
+	}
+	return true, nil // stop, plain length
+}
+
+func hasToolCalls(m llm.Message) bool {
+	for _, b := range m.Content {
+		if b.Kind == llm.BlockToolCall {
+			return true
+		}
+	}
+	return false
 }
 
 // tools runs every tool call in one assistant message and appends a

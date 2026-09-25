@@ -104,6 +104,54 @@ func TestSessionListNewestFirst(t *testing.T) {
 
 // OpenForAppend: resumed sessions keep appending to the original file,
 // and the id stays resumable across generations.
+// A crash-truncated final line (no newline) must not swallow entries
+// appended afterwards: OpenForAppend repairs the tail before writing.
+func TestOpenForAppendRepairsTornTail(t *testing.T) {
+	s := newTestStore(t)
+	sess, err := s.Create("torn", "/p", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.AppendAll([]llm.Message{ //nolint:errcheck
+		{Role: llm.RoleSystem, Content: []llm.Block{llm.TextBlock("s")}},
+		{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("u1")}, TS: 1},
+	})
+	sess.Close() //nolint:errcheck
+
+	// Simulate a crash mid-write: half a line, no newline.
+	path := filepath.Join(s.Root, "torn.jsonl")
+	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	f.WriteString(`{"role":"assistant","content":[{"kind":"text","text":"bro`) //nolint:errcheck
+	f.Close()                                                                  //nolint:errcheck
+
+	s2, err := s.OpenForAppend("torn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.Append(llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("after-crash")}, TS: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The post-crash entry survives: the torn fragment was isolated by
+	// the repair newline instead of merging with it.
+	rec, err := s.Load("torn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range rec.Entries {
+		if e.Msg != nil && len(e.Msg.Content) > 0 && e.Msg.Content[0].Text == "after-crash" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("post-crash entry lost; entries = %d", len(rec.Entries))
+	}
+}
+
 func TestOpenForAppendChain(t *testing.T) {
 	s := newTestStore(t)
 	sess, err := s.Create("gen", "/p", "", "")

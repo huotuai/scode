@@ -99,7 +99,7 @@ func (GrepTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.ToolRe
 				return nil
 			}
 			if a.Glob != "" {
-				if ok, _ := doublestarMatch(a.Glob, relSlash); !ok {
+				if !MatchGlob(a.Glob, relSlash) {
 					return nil
 				}
 			}

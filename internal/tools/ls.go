@@ -121,7 +121,7 @@ func (FindTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.ToolRe
 		if gitignored.Match(relSlash) {
 			return nil
 		}
-		if ok, _ := doublestarMatch(a.Pattern, relSlash); ok {
+		if MatchGlob(a.Pattern, relSlash) {
 			matches = append(matches, relSlash)
 			if len(matches) >= limit {
 				return filepath.SkipAll

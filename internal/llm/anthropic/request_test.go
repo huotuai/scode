@@ -143,6 +143,9 @@ func TestBuildRequestThinkingAndTemperature(t *testing.T) {
 	if req.Thinking == nil || req.Thinking.BudgetTokens != 2048 {
 		t.Fatalf("thinking = %+v", req.Thinking)
 	}
+	if req.Thinking.Type != "enabled" {
+		t.Fatalf("thinking.type = %q — the API requires \"enabled\" or every thinking request 400s", req.Thinking.Type)
+	}
 	if req.Temperature != nil {
 		t.Fatal("temperature must be dropped when thinking is on")
 	}
@@ -152,6 +155,38 @@ func TestBuildRequestThinkingAndTemperature(t *testing.T) {
 	}
 	if req2.Temperature == nil || *req2.Temperature != 0.7 {
 		t.Fatal("temperature must pass through when thinking is off")
+	}
+}
+
+// A tool_use with no matching tool_result (aborted turn) must be
+// synthesized — Anthropic 400s otherwise and the session bricks.
+func TestBuildRequestOrphanToolUseSynthesized(t *testing.T) {
+	tr, err := llm.NormalizeContext(llm.Context{
+		SystemPrompt: "p",
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("go")}, TS: 1},
+			{Role: llm.RoleAssistant, StopReason: llm.StopToolUse, TS: 2, Content: []llm.Block{
+				llm.ToolCallBlock("orphan_1", "bash"),
+				llm.ToolCallBlock("answered_1", "read"),
+			}},
+			{Role: llm.RoleTool, TS: 3, Content: []llm.Block{
+				{Kind: llm.BlockToolResult, ID: "answered_1", Content: []llm.Block{llm.TextBlock("ok")}},
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := BuildRequest(modelCaps(), tr, llm.StreamOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := req.Messages[len(req.Messages)-1]
+	if last.Role != "user" {
+		t.Fatalf("last message role = %s", last.Role)
+	}
+	if len(last.Content) != 1 || last.Content[0].Type != "tool_result" || last.Content[0].ToolUseID != "orphan_1" || !last.Content[0].IsError {
+		t.Fatalf("synthesized result = %+v", last.Content)
 	}
 }
 
