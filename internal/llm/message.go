@@ -67,10 +67,14 @@ const (
 type Block struct {
 	Kind BlockKind `json:"kind"`
 
-	// Text carries the payload for BlockText and BlockThinking.
+	// Text carries the payload for BlockText and BlockThinking (for
+	// redacted thinking it holds the opaque provider data).
 	Text string `json:"text,omitempty"`
 	// Signature authenticates a thinking block across provider round-trips.
 	Signature string `json:"signature,omitempty"`
+	// Redacted marks an opaque redacted-thinking block; it must replay
+	// verbatim (Anthropic redacted_thinking).
+	Redacted bool `json:"redacted,omitempty"`
 
 	// ID identifies a tool call; toolResult blocks reference the same ID.
 	ID string `json:"id,omitempty"`

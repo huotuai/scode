@@ -316,7 +316,9 @@ func DiffTools(prev, cur []Tool) ToolStateChanges {
 		}
 	}
 	for _, t := range prev {
-		if _, ok := curMap[t.Name]; !ok {
+		if c, ok := curMap[t.Name]; !ok || !DeclarationsEqual(t, c) {
+			// A changed definition is removal followed by addition —
+			// name-referencing transports can only replay it that way.
 			out.ToolsRemoved = append(out.ToolsRemoved, t.Name)
 		}
 	}

@@ -325,6 +325,25 @@ func TestLoopLengthTruncatedToolCallsRecovered(t *testing.T) {
 	}
 }
 
+// Non-retryable failures (auth/quota/invalid request) fail fast: one
+// provider call, no pointless replays.
+func TestLoopNonRetryableFailsFast(t *testing.T) {
+	p := &scriptedProvider{script: []llm.Message{
+		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "invalid api key"},
+		{Role: llm.RoleAssistant, StopReason: llm.StopEndTurn, Content: []llm.Block{llm.TextBlock("never")}},
+	}}
+	a := newTestAgent(p, &echoTool{})
+	tr, _ := a.NewSession("t")
+	if _, runErr := collect(t, a, tr, "go"); runErr == nil {
+		t.Fatal("auth error must fail the run")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1 (fail fast, no retries)", p.calls)
+	}
+}
+
 func TestLoopBeforeHookBlocks(t *testing.T) {
 	p := &scriptedProvider{script: []llm.Message{
 		{

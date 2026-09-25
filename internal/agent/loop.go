@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sync"
 	"time"
 
@@ -169,22 +170,31 @@ func (r *run) loop(t *llm.Transcript) error {
 }
 
 // turnRetries re-attempts an LLM round whose stream failed with a
-// provider-side error (the transcript tail is unchanged, so the retry is
-// a pure replay — pi's retryAssistantCall). Aborts never retry.
+// retryable provider-side error (the transcript tail is unchanged, so
+// the retry is a pure replay — pi's retryAssistantCall). Aborts and
+// non-retryable errors (auth, quota, invalid request) never retry.
 const turnRetries = 2
+
+// nonRetryable matches failures a replay of the same request cannot
+// fix (pi's fail-fast error classes).
+var nonRetryable = regexp.MustCompile(`(?i)(api[ _]?key|authentication|unauthorized|forbidden|quota|billing|credit|insufficient|permission|invalid[ _]request|not[ _]found|context[ _]length|too[ _]large|unsupported|deserialize|finish_reason=content_filter)`)
+
+func retryableError(msg string) bool { return !nonRetryable.MatchString(msg) }
 
 // turn streams one assistant message; when it requests tools, executes
 // them and appends the results. Returns stop=true when the loop should
-// end (assistant turn without tool calls). A provider error is retried
-// up to turnRetries times with backoff; only the winning attempt is
-// appended to the transcript.
+// end (assistant turn without tool calls). A retryable provider error
+// is retried up to turnRetries times with backoff; only the winning
+// attempt is appended to the transcript.
 func (r *run) turn(t *llm.Transcript) (bool, error) {
-	var final *llm.Message
 	for attempt := 0; ; attempt++ {
 		events, err := r.a.cfg.Provider.Stream(r.ctx, r.a.cfg.Model, t, r.a.cfg.Stream)
 		if err != nil {
 			return false, err
 		}
+		// final is attempt-scoped: a stale pointer from a failed attempt
+		// must never leak into the next one.
+		var final *llm.Message
 		for ev := range events {
 			e := ev
 			if !r.emit(Event{Type: EvLLM, LLM: &e}) {
@@ -197,7 +207,7 @@ func (r *run) turn(t *llm.Transcript) (bool, error) {
 		if final == nil {
 			return false, fmt.Errorf("provider stream ended without a terminal event")
 		}
-		if final.StopReason == llm.StopError && attempt < turnRetries {
+		if final.StopReason == llm.StopError && attempt < turnRetries && retryableError(final.Error) {
 			select {
 			case <-r.ctx.Done():
 				return false, r.ctx.Err()
@@ -205,9 +215,13 @@ func (r *run) turn(t *llm.Transcript) (bool, error) {
 			}
 			continue
 		}
-		break
+		return r.finishTurn(t, final)
 	}
+}
 
+// finishTurn appends the winning assistant message and routes by stop
+// reason.
+func (r *run) finishTurn(t *llm.Transcript, final *llm.Message) (bool, error) {
 	msg := *final
 	if msg.StopReason == llm.StopError || msg.StopReason == llm.StopAborted {
 		// Failed attempts never append — fail() records exactly one

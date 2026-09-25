@@ -119,6 +119,45 @@ func TestStreamAssembly(t *testing.T) {
 	}
 }
 
+// redacted_thinking must round-trip: opaque data stored on a thinking
+// block, replayed verbatim as redacted_thinking.
+func TestStreamRedactedThinkingRoundTrip(t *testing.T) {
+	asm := newAssembler("claude-x")
+	events, _, err := asm.handle("content_block_start", `{"index":0,"content_block":{"type":"redacted_thinking","data":"encrypted-blob=="}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 || events[0].Type != llm.EventThinkingStart {
+		t.Fatalf("events = %+v", events)
+	}
+	events, _, err = asm.handle("message_stop", `{"type":"message_stop"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := events[len(events)-1].Message
+	if len(msg.Content) != 1 || msg.Content[0].Kind != llm.BlockThinking || !msg.Content[0].Redacted || msg.Content[0].Text != "encrypted-blob==" {
+		t.Fatalf("message = %+v", msg.Content)
+	}
+	// Replay shape.
+	tr, err := llm.NewTranscript(
+		llm.Message{Role: llm.RoleSystem, Content: []llm.Block{llm.TextBlock("s")}},
+		llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("hi")}, TS: 1},
+		*msg,
+		llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("again")}, TS: 2},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := BuildRequest(modelCaps(), tr, llm.StreamOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blk := req.Messages[1].Content[0]
+	if blk.Type != "redacted_thinking" || blk.Data != "encrypted-blob==" {
+		t.Fatalf("replay = %+v", blk)
+	}
+}
+
 func TestStreamHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(400)

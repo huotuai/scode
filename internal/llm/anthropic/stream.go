@@ -34,6 +34,7 @@ type contentBlockStart struct {
 		Type      string          `json:"type"`
 		Text      string          `json:"text"`
 		Thinking  string          `json:"thinking"`
+		Data      string          `json:"data"` // redacted_thinking (opaque)
 		ID        string          `json:"id"`
 		Name      string          `json:"name"`
 		Input     json.RawMessage `json:"input"`
@@ -174,12 +175,18 @@ func (a *assembler) handle(name, data string) ([]llm.Event, bool, error) {
 		case "thinking":
 			lb.block = llm.Block{Kind: llm.BlockThinking, Text: cbs.ContentBlock.Thinking, Signature: cbs.ContentBlock.Signature}
 			ev = llm.EventThinkingStart
+		case "redacted_thinking":
+			// Opaque reasoning the provider encrypted; complete at start,
+			// no deltas, must replay verbatim.
+			lb.block = llm.Block{Kind: llm.BlockThinking, Text: cbs.ContentBlock.Data, Redacted: true}
+			ev = llm.EventThinkingStart
 		case "tool_use":
 			lb.block = llm.Block{Kind: llm.BlockToolCall, ID: cbs.ContentBlock.ID, Name: cbs.ContentBlock.Name}
 			ev = llm.EventToolCallStart
 		default:
-			// Unknown block types are skipped, matching pi's tolerance.
-			a.blocks[cbs.Index] = lb // keep slot so deltas index cleanly
+			// Unknown block types are skipped entirely (events AND
+			// snapshot) — a zero-kind block in the persisted message
+			// would replay as an empty text block the API rejects.
 			return nil, false, nil
 		}
 		a.blocks[cbs.Index] = lb

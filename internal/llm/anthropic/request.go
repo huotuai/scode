@@ -30,6 +30,7 @@ type wireBlock struct {
 
 	Thinking  string `json:"thinking,omitempty"`  // thinking
 	Signature string `json:"signature,omitempty"` // thinking
+	Data      string `json:"data,omitempty"`      // redacted_thinking (opaque)
 
 	ID    string          `json:"id,omitempty"`    // tool_use
 	Name  string          `json:"name,omitempty"`  // tool_use
@@ -264,6 +265,9 @@ func convertOutgoingBlock(b llm.Block) wireBlock {
 	case llm.BlockText:
 		return wireBlock{Type: "text", Text: b.Text}
 	case llm.BlockThinking:
+		if b.Redacted {
+			return wireBlock{Type: "redacted_thinking", Data: b.Text}
+		}
 		return wireBlock{Type: "thinking", Thinking: b.Text, Signature: b.Signature}
 	case llm.BlockToolCall:
 		input := b.Arguments

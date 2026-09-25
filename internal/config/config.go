@@ -50,9 +50,10 @@ type Settings struct {
 
 // ProviderConfig carries per-provider endpoint and model defaults.
 type ProviderConfig struct {
-	BaseURL string `json:"baseUrl,omitempty"`
-	APIKey  string `json:"apiKey,omitempty"`
-	Model   string `json:"model,omitempty"`
+	BaseURL       string `json:"baseUrl,omitempty"`
+	APIKey        string `json:"apiKey,omitempty"`
+	Model         string `json:"model,omitempty"`
+	ContextWindow int    `json:"contextWindow,omitempty"` // tokens; drives the compaction threshold
 }
 
 // LoadSettings reads settings.json, returning defaults when absent.

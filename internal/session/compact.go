@@ -14,8 +14,13 @@ import (
 	"scode/internal/llm"
 )
 
-// DefaultCompactionTokens triggers compaction above this context size.
+// DefaultCompactionTokens triggers compaction above this context size
+// (used when the model's context window is unknown).
 const DefaultCompactionTokens = 80_000
+
+// DefaultReserveTokens is the headroom kept below the model's context
+// window when the window is known (pi's reserveTokens default).
+const DefaultReserveTokens = 16_384
 
 // CompactionEntry marks that everything before it was summarized.
 // It serializes with a top-level "kind":"compaction" field, which no

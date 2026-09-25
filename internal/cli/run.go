@@ -70,14 +70,15 @@ func Setup(opts Options) (*App, error) {
 		CWD:      cwd,
 		CfgDir:   cfgDir,
 		Provider: p,
-		Model:    llm.Model{ID: modelID, Provider: providerName, APIShape: apiShape(providerName)},
+		Model: llm.Model{
+			ID:            modelID,
+			Provider:      providerName,
+			APIShape:      apiShape(providerName),
+			ContextWindow: settings.Providers[providerName].ContextWindow,
+		},
 		Settings: settings,
 	}
-	if settings.CompactionTokens != 0 {
-		a.compactTokens = settings.CompactionTokens
-	} else {
-		a.compactTokens = session.DefaultCompactionTokens
-	}
+	a.compactTokens = resolveCompactTokens(settings, a.Model.ContextWindow)
 
 	store, err := session.NewStore(session.DefaultRoot(cfgDir, cwd))
 	if err != nil {
@@ -99,11 +100,6 @@ func Setup(opts Options) (*App, error) {
 		}
 		a.entries = rec.Entries
 		a.fileOps = rec.LatestFileOps()
-		tr, err := rec.Transcript()
-		if err != nil {
-			return nil, err
-		}
-		a.Tr = tr
 		// Continue appending to the ORIGINAL file: the id stays
 		// resumable forever and a.entries mirrors what is on disk.
 		sess, err := store.OpenForAppend(rec.Header.ID)
@@ -111,6 +107,19 @@ func Setup(opts Options) (*App, error) {
 			return nil, err
 		}
 		a.Sess = sess
+		// Reconcile the stored prompt/tool loadout with the CURRENT
+		// AGENTS.md and registry — edits land as one delta system message
+		// (pi's _preparePromptAndToolLoadout), never a rewrite.
+		if err := a.reconcileLoadout(sysMsg, registry); err != nil {
+			sess.Close() //nolint:errcheck
+			return nil, err
+		}
+		msgs := session.Project(a.entries)
+		tr, err := llm.NewTranscript(msgs[0], msgs[1:]...)
+		if err != nil {
+			return nil, err
+		}
+		a.Tr = tr
 	} else {
 		a.entries = []session.Entry{session.MsgEntry(sysMsg)}
 		tr, err := llm.NewTranscript(sysMsg)
@@ -149,6 +158,74 @@ func apiShape(providerName string) string {
 		return "anthropic-messages"
 	}
 	return "openai-completions"
+}
+
+// resolveCompactTokens picks the compaction threshold: an explicit
+// setting wins (negative disables); else the model's context window
+// minus reserve; else the flat default.
+func resolveCompactTokens(s *config.Settings, window int) int {
+	if s.CompactionTokens != 0 {
+		return s.CompactionTokens
+	}
+	if window > 0 {
+		t := window - session.DefaultReserveTokens
+		if t < 16_000 {
+			t = 16_000 // floor for tiny windows
+		}
+		return t
+	}
+	return session.DefaultCompactionTokens
+}
+
+// reconcileLoadout appends ONE delta system message when the stored
+// session's prompt sections or tool declarations drifted from the
+// current build (AGENTS.md edited between runs, scode version bump
+// changing tool schemas). The stored leading declaration is never
+// touched, so the prefix cache survives the update.
+func (a *App) reconcileLoadout(fresh llm.Message, registry *agent.Registry) error {
+	hasSystem := false
+	for i := range a.entries {
+		if e := a.entries[i]; e.Msg != nil && e.Msg.Role == llm.RoleSystem {
+			hasSystem = true
+			break
+		}
+	}
+	if !hasSystem {
+		return nil
+	}
+
+	patch := llm.Message{Role: llm.RoleSystem}
+	// Compare against the REPLAYED effective state (leading declaration
+	// plus every prior patch), so reconciliation is idempotent: a second
+	// resume with no further drift appends nothing.
+	effective := llm.CurrentSystemMessage(session.Project(a.entries))
+	if effective == nil {
+		return nil
+	}
+	storedSecs := map[string]string{}
+	for _, s := range effective.Sections {
+		storedSecs[s.Name] = s.Value
+	}
+	freshSecs := map[string]string{}
+	for _, s := range fresh.Sections {
+		freshSecs[s.Name] = s.Value
+		if old, ok := storedSecs[s.Name]; !ok || old != s.Value {
+			patch.Sections = append(patch.Sections, llm.Section{Name: s.Name, Value: s.Value})
+		}
+	}
+	for name := range storedSecs {
+		if _, ok := freshSecs[name]; !ok {
+			patch.Sections = append(patch.Sections, llm.Section{Name: name, Delete: true})
+		}
+	}
+	delta := llm.DiffTools(llm.CurrentTools(session.Project(a.entries)), registry.Decls())
+	patch.ToolsAdded = delta.ToolsAdded
+	patch.ToolsRemoved = delta.ToolsRemoved
+
+	if len(patch.Sections) == 0 && len(patch.ToolsAdded) == 0 && len(patch.ToolsRemoved) == 0 {
+		return nil // nothing drifted
+	}
+	return a.persist(session.MsgEntry(patch))
 }
 
 // resolveThinking: flag > settings default > provider default (empty).

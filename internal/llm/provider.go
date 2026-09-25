@@ -38,11 +38,14 @@ const (
 // Model identifies a model behind a provider. Wire details (endpoint paths,
 // auth headers) live in the provider; the transcript layer only needs IDs.
 type Model struct {
-	ID        string       `json:"id"`                  // provider-local model id
-	Provider  string       `json:"provider"`            // provider name (registry key)
-	APIShape  string       `json:"apiShape"`            // wire protocol family, e.g. "anthropic-messages", "openai-completions"
-	MaxTokens int          `json:"maxTokens,omitempty"` // per-request output cap
-	Caps      Capabilities `json:"caps"`                // protocol capabilities (per model: same protocol can differ by endpoint)
+	ID        string `json:"id"`                  // provider-local model id
+	Provider  string `json:"provider"`            // provider name (registry key)
+	APIShape  string `json:"apiShape"`            // wire protocol family, e.g. "anthropic-messages", "openai-completions"
+	MaxTokens int    `json:"maxTokens,omitempty"` // per-request output cap
+	// ContextWindow is the model's input window in tokens (0 = unknown);
+	// compaction thresholds derive from it when known.
+	ContextWindow int          `json:"contextWindow,omitempty"`
+	Caps          Capabilities `json:"caps"` // protocol capabilities (per model: same protocol can differ by endpoint)
 }
 
 // StreamOptions carries per-request knobs. Zero values mean provider

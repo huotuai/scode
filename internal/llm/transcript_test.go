@@ -225,7 +225,9 @@ func TestDiffTools(t *testing.T) {
 	if len(d.ToolsAdded) != 2 || d.ToolsAdded[0].Name != "bash" || d.ToolsAdded[1].Name != "edit" {
 		t.Fatalf("ToolsAdded = %v", toolNames(d.ToolsAdded))
 	}
-	if len(d.ToolsRemoved) != 1 || d.ToolsRemoved[0] != "old" {
+	// A changed declaration is remove+add — name-referencing transports
+	// can only replay it that way.
+	if len(d.ToolsRemoved) != 2 || d.ToolsRemoved[0] != "bash" || d.ToolsRemoved[1] != "old" {
 		t.Fatalf("ToolsRemoved = %v", d.ToolsRemoved)
 	}
 }
