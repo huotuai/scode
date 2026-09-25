@@ -38,11 +38,11 @@ const (
 // Model identifies a model behind a provider. Wire details (endpoint paths,
 // auth headers) live in the provider; the transcript layer only needs IDs.
 type Model struct {
-	ID        string `json:"id"`               // provider-local model id
-	Provider  string `json:"provider"`         // provider name (registry key)
-	APIShape  string `json:"apiShape"`         // wire protocol family, e.g. "anthropic-messages", "openai-completions"
-	MaxTokens int    `json:"maxTokens,omitempty"` // per-request output cap
-	Caps      Capabilities `json:"caps"`       // protocol capabilities (per model: same protocol can differ by endpoint)
+	ID        string       `json:"id"`                  // provider-local model id
+	Provider  string       `json:"provider"`            // provider name (registry key)
+	APIShape  string       `json:"apiShape"`            // wire protocol family, e.g. "anthropic-messages", "openai-completions"
+	MaxTokens int          `json:"maxTokens,omitempty"` // per-request output cap
+	Caps      Capabilities `json:"caps"`                // protocol capabilities (per model: same protocol can differ by endpoint)
 }
 
 // StreamOptions carries per-request knobs. Zero values mean provider
@@ -50,11 +50,14 @@ type Model struct {
 type StreamOptions struct {
 	MaxTokens     int
 	Temperature   float64
-	ThinkingLevel string          // "off"|"low"|"medium"|"high" as supported
-	Cache         CacheRetention  // empty = CacheShort
+	ThinkingLevel string         // "off"|"low"|"medium"|"high" as supported
+	Cache         CacheRetention // empty = CacheShort
 	APIKey        string
 	BaseURL       string
 	ExtraHeaders  map[string]string
+	// PromptCacheKey routes implicit prefix caches (OpenAI-compatible
+	// providers); providers clamp it to protocol limits.
+	PromptCacheKey string
 }
 
 // Provider is a wire-protocol adapter: it turns a transcript into HTTP

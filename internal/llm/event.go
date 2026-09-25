@@ -58,6 +58,9 @@ func ValidateStream(events []Event) error {
 	if events[0].Type != EventStart {
 		return fmt.Errorf("first event is %s, want start", events[0].Type)
 	}
+	if events[0].Message == nil {
+		return fmt.Errorf("start event without message")
+	}
 	terminals := 0
 	for i, e := range events[1:] {
 		if e.Terminal() {
@@ -65,16 +68,13 @@ func ValidateStream(events []Event) error {
 			if terminals > 1 {
 				return fmt.Errorf("event %d: second terminal event", i+1)
 			}
-			if e.Type == EventError && e.Message == nil {
-				return fmt.Errorf("event %d: error event without message", i+1)
+			if e.Message == nil {
+				return fmt.Errorf("event %d: terminal event without message", i+1)
 			}
 			continue
 		}
 		if terminals > 0 {
 			return fmt.Errorf("event %d: event after terminal", i+1)
-		}
-		if e.Message == nil && e.Delta == "" && e.ContentIndex == 0 && e.Type != EventToolCallEnd {
-			return fmt.Errorf("event %d (%s): empty payload", i+1, e.Type)
 		}
 	}
 	if terminals != 1 {

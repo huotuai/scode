@@ -67,16 +67,16 @@ func TestPrefixStabilityAppendMessages(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := tr.Append(Message{
-			Role:    RoleAssistant,
-			Content: []Block{ToolCallBlock("t1", "bash")},
+			Role:       RoleAssistant,
+			Content:    []Block{ToolCallBlock("t1", "bash")},
 			StopReason: StopToolUse, TS: 4,
 		}); err != nil {
 			t.Fatal(err)
 		}
 		if err := tr.Append(Message{
-			Role: RoleTool,
+			Role:    RoleTool,
 			Content: []Block{{Kind: BlockToolResult, ID: "t1", Content: []Block{TextBlock("done")}}},
-			TS:   5,
+			TS:      5,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -137,7 +137,7 @@ func TestCurrentToolsOrdering(t *testing.T) {
 	msgs := []Message{
 		leadingSystem("p", Tool{Name: "a"}, Tool{Name: "b"}, Tool{Name: "c"}),
 		{Role: RoleSystem, ToolsRemoved: []string{"b"}},
-		{Role: RoleSystem, ToolsAdded: []Tool{{Name: "b", Description: "v2"}}}, // re-add moves to end
+		{Role: RoleSystem, ToolsAdded: []Tool{{Name: "b", Description: "v2"}}},      // re-add moves to end
 		{Role: RoleSystem, ToolsAdded: []Tool{{Name: "a", Description: "changed"}}}, // redeclare keeps position
 	}
 	got := CurrentTools(msgs)
