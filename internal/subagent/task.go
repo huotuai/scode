@@ -25,6 +25,18 @@ const ReportFooterPrefix = "(sub-agent "
 // (model-facing, see ReportFooterPrefix).
 const noReportText = "(the sub-agent produced no text report)"
 
+// readOnlyTools is the delegate's fixed toolset (single source: the
+// registry build below and the /agents badge count).
+var readOnlyTools = []agent.Tool{
+	tools.ReadTool{},
+	tools.GrepTool{},
+	tools.FindTool{},
+	tools.LsTool{},
+}
+
+// ToolCount is the delegate toolset size (the /agents list badge).
+func ToolCount() int { return len(readOnlyTools) }
+
 // Host is the host seam: everything the engine needs from cli, with
 // nothing shared mutable — parallel task calls each resolve their own
 // provider and build their own stack.
@@ -134,12 +146,7 @@ func (t *TaskTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.Too
 		Provider: provider,
 		Model:    model,
 		Stream:   llm.StreamOptions{ThinkingLevel: spec.Effort},
-		Tools: agent.NewRegistry(
-			tools.ReadTool{},
-			tools.GrepTool{},
-			tools.FindTool{},
-			tools.LsTool{},
-		),
+		Tools:   agent.NewRegistry(readOnlyTools...),
 		Env:     t.host.Env(),
 		CWD:     t.host.CWD(),
 		Sandbox: t.host.Sandbox,

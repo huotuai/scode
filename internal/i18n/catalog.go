@@ -161,6 +161,10 @@ var catalog = map[string]Message{
 		En: "  ↑/↓ fields · enter cycle option/save · type to edit · ctrl+u clear · esc back",
 		Zh: "  ↑/↓ 字段 · enter 切换选项/保存 · 直接输入文字 · ctrl+u 清空 · esc 返回",
 	},
+	"tui.agents.toolCount": {
+		En: "%d tools",
+		Zh: "%d 个工具",
+	},
 
 	// ---- TUI: sub-agent manager ----
 	"tui.agents.effortDefault": {

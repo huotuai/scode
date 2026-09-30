@@ -26,9 +26,12 @@ func TestAgentsOverlayFlow(t *testing.T) {
 	if !m.agentsOpen || m.agentsStage != agentsStageList {
 		t.Fatal("overlay did not open on the list")
 	}
-	// The merged list ALWAYS carries the shipped built-in.
-	if view := plain(m.agentsView()); !strings.Contains(view, "general-purpose") || !strings.Contains(view, "内置") {
-		t.Fatalf("built-in agent missing from the empty list:\n%s", view)
+	// The merged list ALWAYS carries the shipped built-ins, each with
+	// the read-only toolset badge.
+	if view := plain(m.agentsView()); !strings.Contains(view, "general-purpose") ||
+		!strings.Contains(view, "Explore") || !strings.Contains(view, "内置") ||
+		!strings.Contains(view, "4 个工具") {
+		t.Fatalf("built-in agents missing from the empty list:\n%s", view)
 	}
 	// The modal hides the input box.
 	if !m.inputHidden() {

@@ -33,7 +33,8 @@ func TestSpecValidate(t *testing.T) {
 func TestAllMergesBuiltins(t *testing.T) {
 	// Empty file: the built-in is the whole surface.
 	merged := All(nil)
-	if len(merged) != 1 || merged[0].Name != "general-purpose" || !IsBuiltin("general-purpose") {
+	if len(merged) != 2 || merged[0].Name != "Explore" || merged[1].Name != "general-purpose" ||
+		!IsBuiltin("Explore") || !IsBuiltin("general-purpose") {
 		t.Fatalf("built-in surface = %+v", merged)
 	}
 	if IsBuiltin("researcher") {
@@ -46,14 +47,17 @@ func TestAllMergesBuiltins(t *testing.T) {
 		{Name: "researcher", Effort: "high"},
 		{Name: "general-purpose", Model: "openai-compat:m2"},
 	})
-	if len(merged) != 2 {
+	if len(merged) != 3 {
 		t.Fatalf("merged = %+v", merged)
 	}
-	if merged[0].Name != "general-purpose" || merged[0].Model != "openai-compat:m2" {
-		t.Fatalf("override did not win: %+v", merged[0])
+	if merged[0].Name != "Explore" {
+		t.Fatalf("built-in lost: %+v", merged[0])
 	}
-	if merged[1].Name != "researcher" || merged[1].Effort != "high" {
-		t.Fatalf("user agent lost: %+v", merged[1])
+	if merged[1].Name != "general-purpose" || merged[1].Model != "openai-compat:m2" {
+		t.Fatalf("override did not win: %+v", merged[1])
+	}
+	if merged[2].Name != "researcher" || merged[2].Effort != "high" {
+		t.Fatalf("user agent lost: %+v", merged[2])
 	}
 }
 

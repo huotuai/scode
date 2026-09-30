@@ -316,7 +316,7 @@ func (m *model) agentsListView() string {
 		if effort == "" {
 			effort = i18n.T("tui.agents.effortDefault")
 		}
-		row := s.Name + dimStyle.Render(i18n.Tf("tui.agents.row", model, effort))
+		row := s.Name + dimStyle.Render("  "+i18n.Tf("tui.agents.toolCount", subagent.ToolCount())) + dimStyle.Render(i18n.Tf("tui.agents.row", model, effort))
 		if m.agentIsBuiltin(i) {
 			row += dimStyle.Render(i18n.T("tui.agents.builtinMark"))
 		}

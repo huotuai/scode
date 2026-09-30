@@ -63,10 +63,16 @@ type agentsFile struct {
 // configuration. An agents.json entry with the same name OVERRIDES one
 // (a custom model or effort) without deleting the original.
 func BuiltinSpecs() []Spec {
-	return []Spec{{
-		Name:        "general-purpose",
-		Description: "General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks.",
-	}}
+	return []Spec{
+		{
+			Name:        "general-purpose",
+			Description: "General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks.",
+		},
+		{
+			Name:        "Explore",
+			Description: "Read-only search agent for broad fan-out searches: locate code, map structure, gather evidence across many files.",
+		},
+	}
 }
 
 // All merges the built-ins with the user's definitions; same-name file
