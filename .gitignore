@@ -22,3 +22,7 @@ desktop/tmp-*.js
 jindu.md
 .zcodeignore
 docs/
+AGENTS.md
+package.bat
+build.bat
+build.sh
