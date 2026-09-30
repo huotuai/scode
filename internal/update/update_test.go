@@ -1,9 +1,25 @@
 package update
 
 import (
+	"strings"
 	"testing"
 	"time"
+
+	"scode/internal/i18n"
 )
+
+func TestNoticeLocalized(t *testing.T) {
+	defer i18n.Set(i18n.En)
+	r := CheckResult{Newer: true, Tag: "v0.2.0", Current: "v0.1.0", URL: "https://x"}
+	i18n.Set(i18n.En)
+	if n := r.Notice(); !strings.Contains(n, "run `scode update`") {
+		t.Errorf("en notice: %q", n)
+	}
+	i18n.Set(i18n.Zh)
+	if n := r.Notice(); !strings.Contains(n, "运行 `scode update` 升级") {
+		t.Errorf("zh notice: %q", n)
+	}
+}
 
 func TestNewerSemver(t *testing.T) {
 	pub := time.Date(2026, 2, 14, 0, 0, 0, 0, time.UTC)

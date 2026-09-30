@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"scode/internal/i18n"
 )
 
 // DefaultRepo is the baked-in GitHub "org/repo" release source;
@@ -121,8 +123,7 @@ type CheckResult struct {
 
 // Notice is the one-line hint printed to users when Newer is true.
 func (r CheckResult) Notice() string {
-	return fmt.Sprintf("scode 有新版本 %s（当前 %s）— 运行 `scode update` 升级（%s）",
-		r.Tag, r.Current, r.URL)
+	return i18n.Tf("update.notice", r.Tag, r.Current, r.URL)
 }
 
 // CheckNow queries the release source and compares against current,

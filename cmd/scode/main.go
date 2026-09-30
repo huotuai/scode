@@ -10,6 +10,7 @@ import (
 
 	"scode/internal/cli"
 	"scode/internal/config"
+	"scode/internal/i18n"
 	"scode/internal/sandbox"
 	"scode/internal/server"
 	"scode/internal/tui"
@@ -190,20 +191,20 @@ func runUpdate(args []string) error {
 		if res.Newer {
 			fmt.Println(res.Notice())
 		} else {
-			fmt.Printf("scode %s 已是最新（最新 release: %s）\n", version, res.Tag)
+			fmt.Println(i18n.Tf("update.uptodate", version, res.Tag))
 		}
 		return nil
 	}
-	fmt.Printf("检查更新（%s）...\n", repo)
+	fmt.Println(i18n.Tf("update.checking", repo))
 	res, err := update.SelfUpdate(ctx, repo, dir, version, *force)
 	if err != nil {
 		return err
 	}
 	if !res.Newer && !*force {
-		fmt.Printf("scode %s 已是最新（最新 release: %s）\n", version, res.Tag)
+		fmt.Println(i18n.Tf("update.uptodate", version, res.Tag))
 		return nil
 	}
-	fmt.Printf("已更新到 %s，重新运行 scode 生效。\n", res.Tag)
+	fmt.Println(i18n.Tf("update.done", res.Tag))
 	return nil
 }
 
@@ -229,6 +230,6 @@ func runVersion() {
 	if res.Newer {
 		fmt.Println(res.Notice())
 	} else {
-		fmt.Println("已是最新版本")
+		fmt.Println(i18n.T("version.uptodate"))
 	}
 }
