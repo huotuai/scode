@@ -17,3 +17,6 @@ desktop/tmp-*.js
 
 # Volatile plan scratch from tooling
 .zcode/plans/
+
+# Local progress/decision log stays out of the repo
+jindu.md
