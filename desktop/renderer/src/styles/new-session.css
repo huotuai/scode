@@ -1,0 +1,133 @@
+/* New-session landing page: greeting + workspace picker + composer,
+   stacked in one centered column. */
+
+.new-session-page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-bottom: 10vh; /* optical center: slightly above the middle */
+}
+
+.new-session-hero {
+  text-align: center;
+  color: var(--text-2);
+  margin-bottom: 18px;
+}
+.new-session-hero .empty-sub {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* The picker aligns with the composer's 880px column. */
+.new-session-workspace {
+  width: 100%;
+  max-width: 880px;
+  margin: 0 auto 8px;
+  padding: 0 24px;
+  position: relative;
+  z-index: 40; /* its menu must float above the composer card */
+}
+
+.ws-picker { position: relative; }
+
+.ws-current {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: calc(var(--ui-font-size) - 1.5px);
+  text-align: left;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.15s, background 0.15s;
+}
+.ws-current:hover { background: var(--surface-2); color: var(--text); }
+.ws-current svg { flex-shrink: 0; color: var(--text-3); }
+
+.ws-label { flex-shrink: 0; font-weight: 500; color: var(--text); }
+.ws-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: calc(var(--ui-font-size) - 2px);
+}
+.ws-caret { margin-left: auto; transition: transform 0.15s ease; }
+.ws-caret.open { transform: rotate(180deg); }
+
+/* Scoped under .ws-picker: the TopBar's quick-open reuses the ws-menu/
+   ws-option class names with right-anchored geometry; scoping keeps the
+   two dropdowns from styling each other. */
+.ws-picker .ws-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  z-index: 50;
+}
+.ws-picker .ws-menu-title {
+  padding: 6px 10px 4px;
+  font-size: calc(var(--ui-font-size) - 3px);
+  color: var(--text-3);
+}
+.ws-picker .ws-menu-empty { padding: 8px 10px; font-size: calc(var(--ui-font-size) - 1.5px); }
+
+.ws-picker .ws-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: calc(var(--ui-font-size) - 1px);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.ws-picker .ws-option:hover { background: var(--surface-3); }
+.ws-picker .ws-option.active { background: var(--accent-soft); color: var(--accent); cursor: default; }
+.ws-picker .ws-option > svg { flex-shrink: 0; color: var(--text-3); }
+.ws-picker .ws-option.active > svg { color: var(--accent); }
+
+.ws-picker .ws-option-name { flex-shrink: 0; font-weight: 500; }
+.ws-picker .ws-option-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl; /* long paths truncate at the front, keeping the tail */
+  font-size: calc(var(--ui-font-size) - 2.5px);
+  color: var(--text-3);
+}
+.ws-picker .ws-check { flex-shrink: 0; color: var(--accent); }
+
+.ws-picker .ws-remove {
+  flex-shrink: 0;
+  visibility: hidden;
+}
+.ws-picker .ws-option:hover .ws-remove { visibility: visible; }
+
+.ws-picker .ws-option.ws-new {
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  margin-top: 4px;
+  padding-top: 8px;
+  color: var(--text-2);
+}

@@ -24,6 +24,24 @@ type Capabilities struct {
 	// StreamingToolArguments: tool arguments arrive as incremental JSON
 	// fragments during streaming (Anthropic input_json_delta).
 	StreamingToolArguments bool
+	// ImageInput: the model accepts image inputs (pi's model.input
+	// containing "image"). Tool-result images forward only when set.
+	ImageInput bool
+	// AutoCache: the provider caches prompt prefixes automatically
+	// server-side (DeepSeek/OpenAI/Gemini implicit caching) — one-off
+	// summary calls can reuse the conversation prefix for free. Explicit
+	// breakpoint providers (Anthropic cache_control) leave this false and
+	// keep one-off calls CacheNone (pi's compaction economics).
+	AutoCache bool
+	// MidConvoSystem: the endpoint is VERIFIED to accept system/developer
+	// messages after the conversation has started (pi's
+	// compat.supportsMidConvoSystemMessages — default off there too).
+	// On, later system deltas ride in place instead of folding into the
+	// leading prompt, so the request head (and the implicit prefix
+	// cache) survives mid-session section deltas. Unverified endpoints
+	// may reject or silently drop mid-conversation system messages,
+	// which is why this is an opt-in.
+	MidConvoSystem bool
 }
 
 // CacheRetention selects the provider cache TTL, or disables caching.
@@ -44,8 +62,12 @@ type Model struct {
 	MaxTokens int    `json:"maxTokens,omitempty"` // per-request output cap
 	// ContextWindow is the model's input window in tokens (0 = unknown);
 	// compaction thresholds derive from it when known.
-	ContextWindow int          `json:"contextWindow,omitempty"`
-	Caps          Capabilities `json:"caps"` // protocol capabilities (per model: same protocol can differ by endpoint)
+	ContextWindow int `json:"contextWindow,omitempty"`
+	// Reasoning marks a thinking-capable model (pi's model.reasoning).
+	// Providers that carry a reasoning parameter gate it on this flag so
+	// non-reasoning models never see the field.
+	Reasoning bool         `json:"reasoning,omitempty"`
+	Caps      Capabilities `json:"caps"` // protocol capabilities (per model: same protocol can differ by endpoint)
 }
 
 // StreamOptions carries per-request knobs. Zero values mean provider

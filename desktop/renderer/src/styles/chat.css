@@ -1,0 +1,291 @@
+/* Chat column: messages, thinking blocks, tool cards. */
+
+.chat-scroll {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.chat-column {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 20px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* a new turn (user message) breathes apart from the previous turn's
+   reply; rows within a turn keep the tight 12px rhythm. The margin
+   stacks on top of the column gap. Steer rows (mid-run interjections)
+   are NOT turn starts. */
+.chat-column > .turn-start:not(:first-child) { margin-top: 32px; }
+
+.empty-state {
+  margin: auto;
+  padding: 80px 0;
+  text-align: center;
+  color: var(--text-2);
+}
+.empty-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  margin-bottom: 14px;
+}
+.empty-title { font-size: calc(var(--ui-font-size) + 3px); font-weight: 600; color: var(--text); }
+.empty-sub { margin-top: 6px; font-size: calc(var(--ui-font-size) - 1px); max-width: 380px; }
+
+.msg-row { display: flex; position: relative; }
+.msg-row.user { justify-content: flex-end; }
+.msg-row.assistant { justify-content: flex-start; }
+
+/* hover actions UNDER the message (copy / fork in one row): anchored to
+   the row so the bubble's own flex layout is untouched; the solid
+   backdrop keeps the next message's edge from bleeding through.
+   The bar touches the row (top: 100%) and its padding-top recreates the
+   visual gap — no dead strip between bubble and buttons. It stays
+   hit-testable while transparent (no visibility/pointer-events gating),
+   so entering the button strip from ANY direction — not just sliding
+   down from the text — reveals it; the 0.3s hide delay absorbs brief
+   slips, and the bar stays clickable while fading out. */
+.msg-actions {
+  position: absolute;
+  top: 100%;
+  right: 0; /* user rows: under the right-aligned bubble */
+  display: flex;
+  gap: 2px;
+  padding: 4px 4px 2px;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  transition: opacity 0.12s ease 0.3s;
+  z-index: 2;
+}
+/* assistant rows: pull the bar left by the first button's inner inset
+   ((24px button − 14px icon) / 2 = 5px) so the icon glyph lines up
+   exactly with the reply text's left edge */
+.msg-row.assistant .msg-actions { right: auto; left: -5px; padding-left: 0; }
+.msg-row:hover .msg-actions,
+.msg-actions:hover,
+.msg-actions:focus-within {
+  opacity: 1;
+  transition: opacity 0.06s ease;
+}
+.msg-actions .row-action { width: 24px; height: 24px; color: var(--text-3); }
+.msg-actions .row-action:hover { color: var(--text); }
+/* reply completion time riding the rail (right of the buttons) */
+.row-time {
+  margin-left: 4px;
+  padding-right: 4px;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  line-height: 24px;
+  white-space: nowrap;
+}
+
+.msg {
+  max-width: 88%;
+  padding: 9px 14px;
+  border-radius: var(--radius-lg);
+  /* match the assistant markdown rhythm (reference: ~1.75) so user
+     bubbles don't read tighter than replies */
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.msg.user {
+  background: var(--user-bubble);
+  color: var(--user-bubble-text);
+  border-bottom-right-radius: 4px;
+}
+/* attached images (pasted screenshots) inside the user bubble */
+.msg.user .msg-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.msg.user .msg-images:not(:last-child) { margin-bottom: 6px; }
+.msg.user .msg-images img {
+  max-width: 220px;
+  max-height: 160px;
+  border-radius: var(--radius-sm);
+  display: block;
+  object-fit: cover;
+}
+.msg.steer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--steer-bubble);
+  color: var(--text-2);
+  font-style: italic;
+  border-bottom-right-radius: 4px;
+}
+.msg.assistant {
+  /* plain flow text: no bubble, full column width */
+  max-width: none;
+  width: 100%;
+  padding: 0;
+  white-space: normal; /* markdown handles its own spacing */
+}
+.msg.error {
+  align-self: stretch;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid var(--danger-border);
+  max-width: none;
+}
+.msg.error svg { flex-shrink: 0; margin-top: 3px; }
+.msg.note {
+  align-self: center;
+  background: none;
+  color: var(--text-3);
+  font-size: calc(var(--ui-font-size) - 2px);
+  padding: 2px;
+}
+
+.caret {
+  display: inline-block;
+  width: 7px;
+  height: 15px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: var(--accent);
+  border-radius: 2px;
+  animation: blink 0.9s step-end infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* thinking block — full column width, aligned with tool cards */
+.thinking {
+  align-self: stretch;
+  border-left: 3px solid var(--think-border);
+  padding: 2px 0 2px 12px;
+  font-size: calc(var(--ui-font-size) - 1.5px);
+  color: var(--text-2);
+}
+.thinking summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-style: italic;
+  color: var(--text-3);
+  user-select: none;
+  list-style: none;
+}
+.thinking summary::-webkit-details-marker { display: none; }
+.thinking-body {
+  margin-top: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-style: italic;
+}
+
+/* tool card */
+.tool {
+  align-self: stretch;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.tool.running { border-color: var(--warning); }
+.tool.ok { border-color: color-mix(in srgb, var(--success) 45%, var(--border)); }
+.tool.error { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); }
+.tool-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 12px;
+  font-size: calc(var(--ui-font-size) - 1px);
+  color: var(--text);
+  text-align: left;
+}
+.tool-head:hover { background: var(--surface-3); }
+.tool-name { font-weight: 600; font-family: 'Cascadia Code', Consolas, monospace; font-size: calc(var(--ui-font-size) - 1.5px); }
+.tool-status { margin-left: auto; display: inline-flex; }
+.tool-status.running { color: var(--warning); }
+.tool-status.ok { color: var(--success); }
+.tool-status.error { color: var(--danger); }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Running indicator pinned to the end of the conversation while a
+   run is in flight. */
+.run-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+.run-indicator span { color: var(--text-3); font-size: calc(var(--ui-font-size) - 1.5px); }
+.run-indicator .spin { color: var(--accent); }
+
+.tool pre {
+  margin: 0 12px 8px;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: var(--code-font-size);
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--tool-args);
+}
+.tool .tool-result {
+  color: var(--tool-result);
+  max-height: 220px;
+  overflow-y: auto;
+  border-top: 1px dashed var(--border);
+  padding: 8px 12px;
+  margin: 0;
+}
+.tool-path { font-size: calc(var(--ui-font-size) - 2px); color: var(--text-3); padding: 2px 12px; }
+.tool .diff-old, .tool .diff-new { padding: 6px 10px; border-left: 3px solid; }
+.tool .diff-old { background: var(--diff-old-bg); border-left-color: var(--diff-old-border); }
+.tool .diff-new { background: var(--diff-new-bg); border-left-color: var(--diff-new-border); }
+
+/* folded run group — a finished run's process (thinking, tools, interim
+   text), collapsed by default so only the result stays in view */
+.run-group {
+  align-self: stretch;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.run-group.has-error { border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+.run-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  font-size: calc(var(--ui-font-size) - 1.5px);
+  color: var(--text-3);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+.run-group > summary::-webkit-details-marker { display: none; }
+.run-group > summary:hover { background: var(--surface-3); color: var(--text-2); }
+.run-caret { margin-left: auto; transition: transform 0.15s ease; }
+.run-group[open] .run-caret { transform: rotate(90deg); }
+.run-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+.run-body .tool { background: var(--surface); }

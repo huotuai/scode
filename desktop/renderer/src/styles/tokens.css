@@ -1,0 +1,149 @@
+/* Design tokens — light (default) + dark themes.
+   Dark is a low-saturation blue-gray palette, deliberately not the
+   VSCode default look. */
+
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #f8f8f8;
+  --bg-sunken: #eef0f3;
+  --surface: #ececee;
+  --surface-raised: #ffffff;
+  --surface-2: #f8f9fb;
+  --surface-3: #f0f2f5;
+  --overlay: rgba(31, 35, 41, 0.4);
+
+  --border: #e3e6eb;
+  --border-strong: #d0d4db;
+
+  --text: #1f2329;
+  --text-2: #646a73;
+  --text-3: #9aa0aa;
+
+  --accent: #4f6ef7;
+  --accent-hover: #4060e8;
+  --accent-active: #3552d4;
+  --accent-soft: #eef1fe;
+  --accent-soft-2: #dfe6fd;
+  --on-accent: #ffffff;
+
+  --success: #1a9e54;
+  --success-soft: #e6f6ec;
+  --warning: #d98e04;
+  --warning-soft: #fdf3e0;
+  --danger: #dc4437;
+  --danger-soft: #fdecea;
+  --danger-border: #f3c2bc;
+
+  --user-bubble: #e9edfd;
+  --user-bubble-text: #23283a;
+  --steer-bubble: #f0f2f5;
+
+  --think-border: #d8dbe2;
+  --code-bg: #f2f4f7;
+  --diff-old-bg: #ffebe9;
+  --diff-old-border: #cf222e;
+  --diff-new-bg: #dafbe1;
+  --diff-new-border: #2da44e;
+  --tool-args: #5b6472;
+  --tool-result: #8a5a2b;
+
+  --syn-kw: #a626a4;
+  --syn-str: #3e8e41;
+  --syn-com: #9a9ea8;
+  --syn-num: #b76b01;
+  --syn-type: #b8860b;
+  --syn-fn: #4078f2;
+
+  --shadow-sm: 0 1px 2px rgba(31, 35, 41, 0.06);
+  --shadow-md: 0 4px 16px rgba(31, 35, 41, 0.1);
+  --shadow-lg: 0 12px 40px rgba(31, 35, 41, 0.16);
+
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+
+  --sidebar-w: 264px;
+  --sidebar-w-collapsed: 56px;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #161616;
+  --bg-sunken: #121419;
+  --surface: #2b2b2b;
+  --surface-raised: #1e2128;
+  --surface-2: #23262e;
+  --surface-3: #282c35;
+  --overlay: rgba(0, 0, 0, 0.55);
+
+  --border: #2c3038;
+  --border-strong: #3a3f4a;
+
+  --text: #e4e6ea;
+  --text-2: #9aa0aa;
+  --text-3: #6b7280;
+
+  --accent: #7c93ff;
+  --accent-hover: #8fa2ff;
+  --accent-active: #a3b1ff;
+  --accent-soft: #252b45;
+  --accent-soft-2: #2d3552;
+  --on-accent: #10121a;
+
+  --success: #4cc380;
+  --success-soft: #1b2e24;
+  --warning: #e0a53c;
+  --warning-soft: #332a17;
+  --danger: #e5695e;
+  --danger-soft: #3a2220;
+  --danger-border: #6b3531;
+
+  --user-bubble: #2b3455;
+  --user-bubble-text: #dfe4f5;
+  --steer-bubble: #282c35;
+
+  --think-border: #34394544;
+  --code-bg: #121419;
+  --diff-old-bg: rgba(248, 81, 73, 0.13);
+  --diff-old-border: #f85149;
+  --diff-new-bg: rgba(46, 160, 67, 0.13);
+  --diff-new-border: #3fb950;
+  --tool-args: #8fb8e8;
+  --tool-result: #d9a066;
+
+  --syn-kw: #c678dd;
+  --syn-str: #98c379;
+  --syn-com: #7f8896;
+  --syn-num: #d19a66;
+  --syn-type: #e5c07b;
+  --syn-fn: #61afef;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.55);
+}
+
+/* ------------------------------------------------------------------
+   Code highlight themes (设置 → 外观 → 浅色/深色代码主题). The base
+   palettes above are "One Light" / "One Dark"; the GitHub palettes
+   override the --syn-* tokens when the store sets data-code-theme.
+   ------------------------------------------------------------------ */
+[data-theme='light'][data-code-theme='github'] {
+  --syn-kw: #cf222e;
+  --syn-str: #0a3069;
+  --syn-com: #6e7781;
+  --syn-num: #0550ae;
+  --syn-type: #953800;
+  --syn-fn: #8250df;
+}
+[data-theme='dark'][data-code-theme='github'] {
+  --syn-kw: #ff7b72;
+  --syn-str: #a5d6ff;
+  --syn-com: #8b949e;
+  --syn-num: #79c0ff;
+  --syn-type: #ffa657;
+  --syn-fn: #d2a8ff;
+}

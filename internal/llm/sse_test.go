@@ -2,6 +2,7 @@ package llm
 
 import (
 	"errors"
+	"io"
 	"strings"
 	"testing"
 )
@@ -79,5 +80,22 @@ func TestReadSSEStopError(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("callback ran %d times, want 2", calls)
+	}
+}
+
+type errReader struct{ err error }
+
+func (r errReader) Read([]byte) (int, error) { return 0, r.err }
+
+// A mid-body transport drop (io.ErrUnexpectedEOF from the HTTP layer)
+// must surface with pi's truncation wording — the agent retry whitelist
+// keys off it — while the Go cause stays unwrappable.
+func TestReadSSETransportDropWording(t *testing.T) {
+	err := ReadSSE(errReader{io.ErrUnexpectedEOF}, func(SSEEvent) error { return nil })
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("err = %v, want unexpected EOF cause", err)
+	}
+	if !strings.Contains(err.Error(), "stream ended before a terminal event") {
+		t.Fatalf("err = %q, want pi truncation wording", err)
 	}
 }

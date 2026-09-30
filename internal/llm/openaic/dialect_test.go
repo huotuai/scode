@@ -61,5 +61,10 @@ func TestDialectReasoningFields(t *testing.T) {
 		if len(msg.Content) == 0 || msg.Content[len(msg.Content)-1].Kind != llm.BlockThinking || msg.Content[len(msg.Content)-1].Text != "think" {
 			t.Fatalf("field %s: thinking lost: %+v", field, msg.Content)
 		}
+		// pi's thinkingSignature: the arrival field rides the block's
+		// Signature so the request builder replays under the same key.
+		if got := msg.Content[len(msg.Content)-1].Signature; got != field {
+			t.Fatalf("field %s: signature = %q", field, got)
+		}
 	}
 }

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -17,26 +18,27 @@ import (
 type EventType string
 
 const (
-	EvAgentStart EventType = "agent_start" // a Prompt run began
-	EvTurnStart  EventType = "turn_start"  // one LLM round begins
-	EvLLM        EventType = "llm"         // wrapped llm.Event (stream passthrough)
-	EvAssistant  EventType = "assistant"   // completed assistant message appended
-	EvUser       EventType = "user"        // user message appended (prompt or steered)
-	EvSteered    EventType = "steered"     // queued message accepted mid-run
-	EvToolStart  EventType = "tool_start"  // tool execution began
-	EvToolEnd    EventType = "tool_end"    // tool execution finished
-	EvTurnEnd    EventType = "turn_end"    // LLM round finished
-	EvAgentEnd   EventType = "agent_end"   // Prompt run completed normally
-	EvAgentError EventType = "agent_error" // run failed or aborted
+	EvAgentStart   EventType = "agent_start"   // a Prompt run began
+	EvTurnStart    EventType = "turn_start"    // one LLM round begins
+	EvLLM          EventType = "llm"           // wrapped llm.Event (stream passthrough)
+	EvAssistant    EventType = "assistant"     // completed assistant message appended
+	EvUser         EventType = "user"          // user message appended (prompt or steered)
+	EvToolStart    EventType = "tool_start"    // tool execution began
+	EvToolProgress EventType = "tool_progress" // live status from a long-running tool
+	EvToolEnd      EventType = "tool_end"      // tool execution finished
+	EvTurnEnd      EventType = "turn_end"      // LLM round finished
+	EvAgentEnd     EventType = "agent_end"     // Prompt run completed normally
+	EvAgentError   EventType = "agent_error"   // run failed or aborted
 )
 
 type Event struct {
-	Type    EventType
-	LLM     *llm.Event   // set for EvLLM
-	Message *llm.Message // set for EvAssistant / EvUser / EvAgentError
-	Call    *llm.Block   // set for EvToolStart / EvToolEnd
-	Result  *ToolResult  // set for EvToolEnd
-	Err     error        // set for EvAgentError
+	Type     EventType
+	LLM      *llm.Event   // set for EvLLM
+	Message  *llm.Message // set for EvAssistant / EvUser / EvAgentError
+	Call     *llm.Block   // set for EvToolStart / EvToolProgress / EvToolEnd
+	Result   *ToolResult  // set for EvToolEnd
+	Progress string       // set for EvToolProgress
+	Err      error        // set for EvAgentError
 }
 
 // Config tunes one agent.
@@ -47,31 +49,89 @@ type Config struct {
 	Tools    *Registry
 	Before   BeforeToolCall
 	After    AfterToolCall
-	Parallel bool // execute one turn's tool calls concurrently
-	MaxTurns int  // safety bound; 0 = defaultMaxTurns
-	Env      map[string]string
-	CWD      string
+	// Sandbox resolves the per-call file-effect policy (mode switches
+	// take effect on the NEXT restricted call). nil = unfenced.
+	Sandbox func() *SandboxPolicy
+	// SandboxEscalation resolves a per-call sandbox widening through the
+	// session's approval channel (nil = fail closed).
+	SandboxEscalation func(EscalationRequest) EscalationResult
+	// ToolExecution is pi's toolExecution: "parallel" (default) or
+	// "sequential". A tool reporting ExecutionMode() == "sequential"
+	// forces its batch sequential.
+	ToolExecution string
+	// Retry is pi's settings.retry policy for the assistant call.
+	Retry RetryPolicy
+	// SteeringMode and FollowUpMode are pi's queue drain modes
+	// (default one-at-a-time).
+	SteeringMode QueueMode
+	FollowUpMode QueueMode
+	Env          map[string]string
+	CWD          string
 }
 
-const defaultMaxTurns = 50
+// QueueMode is pi's queue drain mode for steering/follow-up messages.
+type QueueMode string
+
+const (
+	QueueOneAtATime QueueMode = "one-at-a-time" // default
+	QueueAll        QueueMode = "all"
+)
 
 // Agent runs streaming turns against a provider until the model stops
-// calling tools. One Agent, one Prompt at a time.
+// calling tools. One Agent, one Prompt at a time. Like pi's runLoop
+// there is no turn cap: the loop ends when the model ends its turn or
+// the caller aborts.
 type Agent struct {
 	cfg Config
 
-	steerMu sync.Mutex
-	steer   []string
+	queueMu  sync.Mutex
+	steer    []string
+	followUp []string
 }
 
 func New(cfg Config) *Agent {
-	if cfg.MaxTurns <= 0 {
-		cfg.MaxTurns = defaultMaxTurns
-	}
 	if cfg.Tools == nil {
 		cfg.Tools = NewRegistry()
 	}
+	if cfg.Retry == (RetryPolicy{}) {
+		cfg.Retry = DefaultRetryPolicy()
+	}
+	if cfg.SteeringMode == "" {
+		cfg.SteeringMode = QueueOneAtATime
+	}
+	if cfg.FollowUpMode == "" {
+		cfg.FollowUpMode = QueueOneAtATime
+	}
 	return &Agent{cfg: cfg}
+}
+
+// SetModel swaps the provider/model (and tool env) for subsequent
+// turns. Callers must guarantee no run is in flight: the loop reads
+// cfg without a lock.
+func (a *Agent) SetModel(p llm.Provider, m llm.Model, env map[string]string) {
+	a.cfg.Provider = p
+	a.cfg.Model = m
+	if env != nil {
+		a.cfg.Env = env
+	}
+}
+
+// SetThinkingLevel swaps the reasoning effort for subsequent runs
+// ("" = provider default, "off"|"low"|"medium"|"high"). Same
+// no-run-in-flight contract as SetModel.
+func (a *Agent) SetThinkingLevel(level string) {
+	a.cfg.Stream.ThinkingLevel = level
+}
+
+// SetSession swaps the session identity for subsequent runs: the
+// prompt-cache routing key and the tool env both name the session
+// (cli /new rebinds the app to a fresh session file in place). Same
+// no-run-in-flight contract as SetModel.
+func (a *Agent) SetSession(id string, env map[string]string) {
+	a.cfg.Stream.PromptCacheKey = id
+	if env != nil {
+		a.cfg.Env = env
+	}
 }
 
 // NewSession builds a transcript with the system prompt and the registry's
@@ -87,65 +147,84 @@ func (a *Agent) NewSession(systemPrompt string) (*llm.Transcript, error) {
 // Prompt appends a user message and runs the agent loop to completion.
 // Events stream to out, which Prompt closes on return — range over it.
 // The returned error is non-nil only when the run could not complete
-// (provider error, abort, turn limit).
+// (provider error or abort).
 func (a *Agent) Prompt(ctx context.Context, t *llm.Transcript, userText string, out chan<- Event) error {
-	if err := t.AppendNow(llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock(userText)}}); err != nil {
+	return a.PromptBlocks(ctx, t, []llm.Block{llm.TextBlock(userText)}, out)
+}
+
+// PromptBlocks is Prompt with rich content: text plus image blocks
+// (pi's user message with attachments). An empty content slice is a
+// no-op prompt (the loop continues from the transcript tail).
+func (a *Agent) PromptBlocks(ctx context.Context, t *llm.Transcript, content []llm.Block, out chan<- Event) error {
+	if len(content) == 0 {
+		return a.Continue(ctx, t, out)
+	}
+	if err := t.AppendNow(llm.Message{Role: llm.RoleUser, Content: content}); err != nil {
 		close(out)
 		return err
 	}
 	return a.Continue(ctx, t, out)
 }
 
-// Steer queues a user message for injection at the next safe point —
-// between LLM turns (mid-run correction, pi's steering) or when the
-// loop is about to stop (follow-up that keeps the run alive). Safe to
-// call from any goroutine while a run is active.
+// Steer queues a steering message for injection at the next safe
+// point — between LLM turns or when the loop is about to stop (pi's
+// steering). Safe to call from any goroutine while a run is active.
 func (a *Agent) Steer(text string) {
 	if strings.TrimSpace(text) == "" {
 		return
 	}
-	a.steerMu.Lock()
-	defer a.steerMu.Unlock()
+	a.queueMu.Lock()
+	defer a.queueMu.Unlock()
 	a.steer = append(a.steer, text)
 }
 
-// drainSteer appends every queued message to the transcript as user
-// messages. Returns true when at least one was injected.
-func (a *Agent) drainSteer(t *llm.Transcript, out chan<- Event, emit bool) bool {
-	a.steerMu.Lock()
-	msgs := a.steer
-	a.steer = nil
-	a.steerMu.Unlock()
-	if len(msgs) == 0 {
-		return false
+// FollowUp queues a message delivered only when the loop would stop,
+// keeping the run alive (pi's follow-up queue).
+func (a *Agent) FollowUp(text string) {
+	if strings.TrimSpace(text) == "" {
+		return
 	}
-	for _, m := range msgs {
-		um := llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock(m)}}
-		if err := t.AppendNow(um); err != nil {
-			continue
-		}
-		if emit {
-			u := um
-			select {
-			case out <- Event{Type: EvUser, Message: &u}:
-			default:
-			}
-		}
+	a.queueMu.Lock()
+	defer a.queueMu.Unlock()
+	a.followUp = append(a.followUp, text)
+}
+
+// drain dequeues steering/follow-up messages per the queue mode (pi's
+// PendingMessageQueue): one-at-a-time takes the oldest, all takes
+// everything.
+func (a *Agent) drain(queue *[]string, mode QueueMode) []string {
+	a.queueMu.Lock()
+	defer a.queueMu.Unlock()
+	if len(*queue) == 0 {
+		return nil
 	}
-	return true
+	if mode == QueueAll {
+		out := *queue
+		*queue = nil
+		return out
+	}
+	out := (*queue)[:1]
+	*queue = (*queue)[1:]
+	return out
 }
 
 // Continue resumes the loop from the current transcript tail (also the
-// entry after Prompt appended the user message). The tail must not be an
-// assistant message — the provider would reject the shape. out is closed
-// on return.
+// entry after Prompt appended the user message). The tail must not be a
+// COMPLETED assistant message — re-asking without new input is a bug.
+// A tail carrying a recorded failure (error/aborted) is fine: request
+// builders replay it as text, so Continue re-issues the failed LLM
+// call — the overflow-recovery path relies on this. out is closed on
+// return.
 func (a *Agent) Continue(ctx context.Context, t *llm.Transcript, out chan<- Event) error {
 	defer close(out)
 	msgs := t.Messages()
 	if len(msgs) > 0 && msgs[len(msgs)-1].Role == llm.RoleAssistant {
-		return fmt.Errorf("cannot continue: transcript tail is an assistant message")
+		tail := msgs[len(msgs)-1]
+		if tail.StopReason != llm.StopError && tail.StopReason != llm.StopAborted {
+			return fmt.Errorf("cannot continue: transcript tail is an assistant message")
+		}
 	}
-	r := &run{a: a, ctx: ctx, out: out}
+	r := &run{a: a, ctx: ctx, out: out, model: a.cfg.Model, thinking: a.cfg.Stream.ThinkingLevel}
 	return r.loop(t)
 }
 
@@ -154,6 +233,9 @@ type run struct {
 	a   *Agent
 	ctx context.Context
 	out chan<- Event
+
+	model    llm.Model // request-time model/thinking are run-scoped copies
+	thinking string    // of the config (a run never changes them mid-flight)
 }
 
 func (r *run) emit(ev Event) bool {
@@ -165,83 +247,176 @@ func (r *run) emit(ev Event) bool {
 	}
 }
 
-// fail records the failure as ONE replayable assistant message in the
-// transcript (text content carries the reason so request builders can
-// send it back), then reports it.
+// fail reports a run failure. The stream's own terminal error message
+// is already in the transcript (finishTurn appends it, like pi keeping
+// the failed assistant message in state); only failures that never
+// produced a message get a synthetic record — content-less, with the
+// error field set. Request transforms skip such messages on replay, so
+// the failure never poisons later requests.
 func (r *run) fail(t *llm.Transcript, err error) error {
-	stop := llm.StopError
-	text := fmt.Sprintf("[turn failed: %v]", err)
-	if r.ctx.Err() != nil {
-		stop = llm.StopAborted
-		text = "[turn aborted by caller]"
+	msgs := t.Messages()
+	recorded := len(msgs) > 0 && msgs[len(msgs)-1].Role == llm.RoleAssistant &&
+		(msgs[len(msgs)-1].StopReason == llm.StopError || msgs[len(msgs)-1].StopReason == llm.StopAborted)
+	if !recorded {
+		stop := llm.StopError
+		if r.ctx.Err() != nil {
+			stop = llm.StopAborted
+		}
+		msg := llm.Message{
+			Role:       llm.RoleAssistant,
+			TS:         time.Now().UnixMilli(),
+			StopReason: stop,
+			Error:      err.Error(),
+		}
+		_ = t.Append(msg) // best effort: transcript may itself be the problem
+		m := msg
+		r.emit(Event{Type: EvAgentError, Message: &m, Err: err})
+		return err
 	}
-	msg := llm.Message{
-		Role:       llm.RoleAssistant,
-		TS:         time.Now().UnixMilli(),
-		Content:    []llm.Block{llm.TextBlock(text)},
-		StopReason: stop,
-		Error:      err.Error(),
-	}
-	_ = t.Append(msg) // best effort: transcript may itself be the problem
-	m := msg
-	r.emit(Event{Type: EvAgentError, Message: &m, Err: err})
+	r.emit(Event{Type: EvAgentError, Err: err})
 	return err
 }
 
+// loop is pi's runLoop: an inner loop processing tool calls and
+// steered messages, wrapped by an outer loop that keeps the run alive
+// for queued follow-ups. No turn cap — the model ending its turn (or
+// the caller aborting) is the only exit.
 func (r *run) loop(t *llm.Transcript) error {
 	if !r.emit(Event{Type: EvAgentStart}) {
 		return r.ctx.Err()
 	}
-	for turn := 0; turn < r.a.cfg.MaxTurns; turn++ {
-		if err := r.ctx.Err(); err != nil {
-			return r.fail(t, err)
-		}
-		if !r.emit(Event{Type: EvTurnStart}) {
-			return r.fail(t, r.ctx.Err())
-		}
-		stop, err := r.turn(t)
-		if err != nil {
-			return r.fail(t, err)
-		}
-		if !r.emit(Event{Type: EvTurnEnd}) {
-			return r.fail(t, r.ctx.Err())
-		}
-		if stop {
-			// A message steered while the model was wrapping up keeps
-			// the run alive (pi's follow-up queue).
-			if r.a.drainSteer(t, r.out, true) {
-				continue
+	// Steering queued while waiting is injected first (pi).
+	pending := r.a.drain(&r.a.steer, r.a.cfg.SteeringMode)
+	for {
+		hasMoreToolCalls := true
+		for hasMoreToolCalls || len(pending) > 0 {
+			if err := r.ctx.Err(); err != nil {
+				return r.fail(t, err)
 			}
-			r.emit(Event{Type: EvAgentEnd})
-			return nil
+			if !r.emit(Event{Type: EvTurnStart}) {
+				return r.fail(t, r.ctx.Err())
+			}
+			for _, m := range textsToMessages(pending) {
+				if err := r.appendInjected(t, m); err != nil {
+					return r.fail(t, err)
+				}
+			}
+			pending = nil
+
+			stop, err := r.turn(t)
+			if err != nil {
+				return r.fail(t, err)
+			}
+			if !r.emit(Event{Type: EvTurnEnd}) {
+				return r.fail(t, r.ctx.Err())
+			}
+
+			hasMoreToolCalls = !stop
+			// Mid-run steering: corrections land between turns, so the
+			// next LLM call sees them (pi's getSteeringMessages drain).
+			pending = r.a.drain(&r.a.steer, r.a.cfg.SteeringMode)
 		}
-		// Mid-run steering: corrections land between turns, so the next
-		// LLM call sees them (pi's getSteeringMessages drain point).
-		r.a.drainSteer(t, r.out, true)
+		// The loop would stop here; queued follow-ups keep it alive
+		// (pi's getFollowUpMessages).
+		if followUps := r.a.drain(&r.a.followUp, r.a.cfg.FollowUpMode); len(followUps) > 0 {
+			pending = followUps
+			continue
+		}
+		break
 	}
-	return r.fail(t, fmt.Errorf("turn limit exceeded (%d)", r.a.cfg.MaxTurns))
+	r.emit(Event{Type: EvAgentEnd})
+	return nil
+}
+
+// textsToMessages wraps steered/follow-up texts as user messages.
+func textsToMessages(texts []string) []llm.Message {
+	var out []llm.Message
+	for _, text := range texts {
+		out = append(out, llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock(text)}})
+	}
+	return out
+}
+
+// appendInjected appends one injected message (steering or follow-up)
+// and emits its lifecycle event.
+func (r *run) appendInjected(t *llm.Transcript, m llm.Message) error {
+	llm.NormalizeArguments(&m)
+	if err := t.AppendNow(m); err != nil {
+		return err
+	}
+	switch m.Role {
+	case llm.RoleUser:
+		u := m
+		if !r.emit(Event{Type: EvUser, Message: &u}) {
+			return r.ctx.Err()
+		}
+	case llm.RoleAssistant:
+		u := m
+		if !r.emit(Event{Type: EvAssistant, Message: &u}) {
+			return r.ctx.Err()
+		}
+	}
+	return nil
 }
 
 // turnRetries re-attempts an LLM round whose stream failed with a
 // retryable provider-side error (the transcript tail is unchanged, so
-// the retry is a pure replay — pi's retryAssistantCall). Aborts and
-// non-retryable errors (auth, quota, invalid request) never retry.
-const turnRetries = 2
+// the retry is a pure replay — pi's retryAssistantCall). Aborts never
+// retry.
 
-// nonRetryable matches failures a replay of the same request cannot
-// fix (pi's fail-fast error classes).
-var nonRetryable = regexp.MustCompile(`(?i)(api[ _]?key|authentication|unauthorized|forbidden|quota|billing|credit|insufficient|permission|invalid[ _]request|not[ _]found|context[ _]length|too[ _]large|unsupported|deserialize|finish_reason=content_filter)`)
+// RetryPolicy mirrors pi's settings.retry: bounded attempts with
+// exponential backoff (baseDelayMs * 2^(attempt-1)), each delay capped
+// at maxAgentDelayMs.
+type RetryPolicy struct {
+	Enabled         bool
+	MaxRetries      int // 0 = no retries; the initial call never counts
+	BaseDelayMs     int
+	MaxAgentDelayMs int
+}
 
-func retryableError(msg string) bool { return !nonRetryable.MatchString(msg) }
+// DefaultRetryPolicy is pi's default: 3 retries, 2s base, 60s cap.
+func DefaultRetryPolicy() RetryPolicy {
+	return RetryPolicy{Enabled: true, MaxRetries: 3, BaseDelayMs: 2000, MaxAgentDelayMs: 60_000}
+}
+
+// retryDelayMs is pi's retryDelayMs: baseDelayMs * 2^(attempt-1),
+// capped (attempt is 1-indexed).
+func (p RetryPolicy) retryDelayMs(attempt int) int {
+	d := p.BaseDelayMs << (attempt - 1)
+	if d < 0 || d > p.MaxAgentDelayMs { // overflow guard
+		d = p.MaxAgentDelayMs
+	}
+	return d
+}
+
+// Error classification ported from pi's utils/retry.ts: a WHITELIST —
+// only errors matching known-transient patterns retry; the small
+// blacklist short-circuits quota/billing exhaustion; anything
+// unrecognized fails fast.
+var nonRetryableProviderLimitError = regexp.MustCompile(`(?i)(GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|available balance|insufficient_quota|out of budget|quota exceeded|billing)`)
+
+var retryableProviderError = regexp.MustCompile(`(?i)(overloaded|currently experiencing high demand|rate.?limit|too many requests|429|500|502|503|504|520|524|service.?unavailable|server.?error|internal.?error|provider.?returned.?error|exceeded request buffer limit while retrying upstream|network.?error|connection.?error|connection.?refused|connection.?lost|other side closed|fetch failed|getaddrinfo|ENOTFOUND|EAI_AGAIN|upstream.?connect|reset before headers|socket hang up|socket connection was closed|timed? out|timeout|terminated|websocket.?closed|websocket.?error|ended without|stream ended before message_stop|stream ended before a terminal( response)? event|http2 request did not get a response|retry delay|you can retry your request|try your request again|please retry your request|ResourceExhausted)`)
+
+// retryableError is pi's isRetryableAssistantError.
+func retryableError(msg string) bool {
+	if nonRetryableProviderLimitError.MatchString(msg) {
+		return false
+	}
+	return retryableProviderError.MatchString(msg)
+}
 
 // turn streams one assistant message; when it requests tools, executes
 // them and appends the results. Returns stop=true when the loop should
 // end (assistant turn without tool calls). A retryable provider error
-// is retried up to turnRetries times with backoff; only the winning
-// attempt is appended to the transcript.
+// is retried under the retry policy with pi's backoff; only the
+// winning attempt is appended to the transcript.
 func (r *run) turn(t *llm.Transcript) (bool, error) {
+	maxRetries := 0
+	if r.a.cfg.Retry.Enabled {
+		maxRetries = r.a.cfg.Retry.MaxRetries
+	}
 	for attempt := 0; ; attempt++ {
-		events, err := r.a.cfg.Provider.Stream(r.ctx, r.a.cfg.Model, t, r.a.cfg.Stream)
+		events, err := r.a.cfg.Provider.Stream(r.ctx, r.model, t, r.streamOptions())
 		if err != nil {
 			return false, err
 		}
@@ -260,11 +435,12 @@ func (r *run) turn(t *llm.Transcript) (bool, error) {
 		if final == nil {
 			return false, fmt.Errorf("provider stream ended without a terminal event")
 		}
-		if final.StopReason == llm.StopError && attempt < turnRetries && retryableError(final.Error) {
+		if final.StopReason == llm.StopError && attempt < maxRetries && retryableError(final.Error) {
+			delay := r.a.cfg.Retry.retryDelayMs(attempt + 1) // attempt is 1-indexed (pi)
 			select {
 			case <-r.ctx.Done():
 				return false, r.ctx.Err()
-			case <-time.After(time.Second << uint(attempt)):
+			case <-time.After(time.Duration(delay) * time.Millisecond):
 			}
 			continue
 		}
@@ -272,21 +448,36 @@ func (r *run) turn(t *llm.Transcript) (bool, error) {
 	}
 }
 
+// streamOptions resolves this turn's stream options (thinking level
+// is request-time state since hooks may replace it).
+func (r *run) streamOptions() llm.StreamOptions {
+	opts := r.a.cfg.Stream
+	opts.ThinkingLevel = r.thinking
+	return opts
+}
+
 // finishTurn appends the winning assistant message and routes by stop
 // reason.
 func (r *run) finishTurn(t *llm.Transcript, final *llm.Message) (bool, error) {
 	msg := *final
+	msg.TS = time.Now().UnixMilli()
+	// Provider-produced tool arguments must be marshalable before they
+	// enter the transcript: invalid JSON fragments would otherwise break
+	// persistence and replay.
+	llm.NormalizeArguments(&msg)
 	if msg.StopReason == llm.StopError || msg.StopReason == llm.StopAborted {
-		// Failed attempts never append — fail() records exactly one
-		// replayable error turn. Appending the stream's content-less
-		// terminal message here would double-encode the failure and
-		// produce a shape request builders reject.
+		// The failed turn is recorded like any other message (pi keeps
+		// it in state, partial content included); request transforms
+		// skip it on replay. fail() reports without re-appending.
+		_ = t.Append(msg)
 		if msg.StopReason == llm.StopError {
 			return false, fmt.Errorf("%s", msg.Error)
 		}
-		return false, r.ctx.Err()
+		if err := r.ctx.Err(); err != nil {
+			return false, err
+		}
+		return false, fmt.Errorf("%s", msg.Error)
 	}
-	msg.TS = time.Now().UnixMilli()
 	if err := t.Append(msg); err != nil {
 		return false, err
 	}
@@ -301,23 +492,24 @@ func (r *run) finishTurn(t *llm.Transcript, final *llm.Message) (bool, error) {
 		// Output ran out mid-tool-call: the arguments may be truncated.
 		// Answer every call with an error result so the transcript stays
 		// valid and the model can re-issue them (pi's
-		// failToolCallsFromTruncatedMessage) — otherwise the tail is an
-		// assistant message with unanswered calls that no provider
-		// accepts.
-		results := make([]llm.Block, 0, len(msg.Content))
+		// failToolCallsFromTruncatedMessage, including its message text)
+		// — otherwise the tail is an assistant message with unanswered
+		// calls that no provider accepts.
 		for _, b := range msg.Content {
 			if b.Kind != llm.BlockToolCall {
 				continue
 			}
-			results = append(results, llm.Block{
-				Kind:    llm.BlockToolResult,
-				ID:      b.ID,
-				Content: []llm.Block{llm.TextBlock("The turn hit the output-token limit; the tool arguments may be truncated. Re-issue the tool call.")},
+			result := llm.Block{
+				Kind: llm.BlockToolResult,
+				ID:   b.ID,
+				Content: []llm.Block{llm.TextBlock(fmt.Sprintf(
+					"Tool call %q was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.",
+					b.Name))},
 				IsError: true,
-			})
-		}
-		if err := t.AppendNow(llm.Message{Role: llm.RoleTool, Content: results}); err != nil {
-			return false, err
+			}
+			if err := t.AppendNow(llm.Message{Role: llm.RoleTool, Content: []llm.Block{result}}); err != nil {
+				return false, err
+			}
 		}
 		return false, nil // continue the loop; the model recovers
 	}
@@ -333,10 +525,12 @@ func hasToolCalls(m llm.Message) bool {
 	return false
 }
 
-// tools runs every tool call in one assistant message and appends a
-// single tool-result message. Sequential by default; Parallel fans the
-// executions out but results are appended in call order so the
-// transcript stays deterministic.
+// tools runs every tool call in one assistant message. Parallel by
+// default (pi's executeToolCallsParallel); "sequential" config or a
+// tool declaring ExecutionMode() == "sequential" forces the batch
+// sequential (pi's rule). Results are appended in call order — one
+// toolResult message per call (pi's shape) — so the transcript stays
+// deterministic.
 func (r *run) tools(t *llm.Transcript, asst llm.Message) error {
 	var calls []llm.Block
 	for _, b := range asst.Content {
@@ -350,11 +544,30 @@ func (r *run) tools(t *llm.Transcript, asst llm.Message) error {
 		results[i] = llm.Block{
 			Kind:    llm.BlockToolResult,
 			ID:      calls[i].ID,
+			Name:    calls[i].Name, // pi's ToolResultMessage.toolName (Google functionResponse needs it)
 			Content: res.Content,
 			IsError: res.IsError,
 		}
 	}
-	if r.a.cfg.Parallel && len(calls) > 1 {
+	sequential := r.a.cfg.ToolExecution == "sequential"
+	if !sequential {
+		for _, c := range calls {
+			if tool, ok := r.a.cfg.Tools.Get(c.Name); ok {
+				if sm, is := tool.(interface{ ExecutionMode() string }); is && sm.ExecutionMode() == "sequential" {
+					sequential = true
+					break
+				}
+			}
+		}
+	}
+	if sequential || len(calls) <= 1 {
+		for i := range calls {
+			run(i)
+			if r.ctx.Err() != nil {
+				break
+			}
+		}
+	} else {
 		var wg sync.WaitGroup
 		for i := range calls {
 			wg.Add(1)
@@ -364,12 +577,13 @@ func (r *run) tools(t *llm.Transcript, asst llm.Message) error {
 			}(i)
 		}
 		wg.Wait()
-	} else {
-		for i := range calls {
-			run(i)
+	}
+	for _, b := range results {
+		if err := t.AppendNow(llm.Message{Role: llm.RoleTool, Content: []llm.Block{b}}); err != nil {
+			return err
 		}
 	}
-	return t.AppendNow(llm.Message{Role: llm.RoleTool, Content: results})
+	return nil
 }
 
 // one executes a single call through the hook pipeline: Before (veto),
@@ -385,19 +599,56 @@ func (r *run) one(call llm.Block) ToolResult {
 	tool, ok := r.a.cfg.Tools.Get(call.Name)
 	blocked, reason := false, ""
 	if r.a.cfg.Before != nil {
-		blocked, reason = r.a.cfg.Before(call)
+		blocked, reason = r.a.cfg.Before(r.ctx, call)
 	}
-	argsErr := validateArguments(call.Arguments)
+	var argsErr error
+	args := call.Arguments
+	if ok {
+		// pi validates (and coerces) arguments against the tool's
+		// declared JSON Schema before execution; the tool runs with
+		// the coerced value.
+		var coerced json.RawMessage
+		coerced, argsErr = llm.ValidateArguments(tool.Decl().Parameters, call.Arguments)
+		if argsErr == nil {
+			args = coerced
+		}
+	}
 	switch {
 	case !ok:
 		res = ErrorResult(fmt.Sprintf("unknown tool %q", call.Name))
 	case blocked:
 		res = ErrorResult(fmt.Sprintf("tool call blocked: %s", reason))
 	case argsErr != nil:
-		res = ErrorResult(fmt.Sprintf("invalid arguments for %q: arguments must be a JSON object", call.Name))
+		res = ErrorResult(fmt.Sprintf("invalid arguments for %q: %v", call.Name, argsErr))
 	default:
 		tc := ToolContext{Ctx: r.ctx, Env: r.a.cfg.Env, CWD: r.a.cfg.CWD}
-		res = tool.Execute(tc, call.Arguments)
+		tc.Progress = func(line string) {
+			pc := call
+			r.emit(Event{Type: EvToolProgress, Call: &pc, Progress: line})
+		}
+		if r.a.cfg.Sandbox != nil {
+			tc.Sandbox = r.a.cfg.Sandbox()
+		}
+		if r.a.cfg.SandboxEscalation != nil {
+			// Close over the call's identity: the tool supplies only the
+			// mode/justification/detail.
+			tc.Escalate = func(requestedMode, justification, detail string) EscalationResult {
+				effective := "danger-full-access"
+				if tc.Sandbox != nil && tc.Sandbox.Mode != "" {
+					effective = tc.Sandbox.Mode
+				}
+				return r.a.cfg.SandboxEscalation(EscalationRequest{
+					Ctx:           r.ctx,
+					Tool:          call.Name,
+					CallID:        call.ID,
+					Detail:        detail,
+					CurrentMode:   effective,
+					RequestedMode: requestedMode,
+					Justification: justification,
+				})
+			}
+		}
+		res = tool.Execute(tc, args)
 	}
 	if r.a.cfg.After != nil {
 		res = r.a.cfg.After(call, res)

@@ -102,6 +102,7 @@ func newTestAgent(p llm.Provider, tools ...Tool) *Agent {
 		Provider: p,
 		Model:    llm.Model{ID: "test-model", Provider: "scripted"},
 		Tools:    NewRegistry(tools...),
+		Retry:    RetryPolicy{Enabled: true, MaxRetries: 3, BaseDelayMs: 1, MaxAgentDelayMs: 50},
 	})
 }
 
@@ -182,8 +183,9 @@ func TestLoopToolRoundTrip(t *testing.T) {
 
 func TestLoopProviderErrorRecorded(t *testing.T) {
 	// Turn-level retries replay the same turn, so the script needs one
-	// failure per attempt before the run gives up.
+	// failure per attempt (initial + maxRetries) before the run gives up.
 	p := &scriptedProvider{script: []llm.Message{
+		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "rate limited"},
 		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "rate limited"},
 		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "rate limited"},
 		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "rate limited"},
@@ -203,16 +205,13 @@ func TestLoopProviderErrorRecorded(t *testing.T) {
 	if !sawErrEvent {
 		t.Fatal("no agent_error event")
 	}
-	// One replayable failure turn: exactly one error assistant message,
-	// carrying text content so request builders can replay it.
+	// Exactly one error assistant message (pi keeps the failed turn in
+	// state); request transforms skip it, so it needs no content.
 	msgs := tr.Messages()
 	errMsgs := 0
 	for _, m := range msgs {
 		if m.Role == llm.RoleAssistant && m.StopReason == llm.StopError {
 			errMsgs++
-			if len(m.Content) == 0 || m.Content[0].Kind != llm.BlockText {
-				t.Fatalf("error turn lacks replayable content: %+v", m)
-			}
 		}
 	}
 	if errMsgs != 1 {
@@ -224,9 +223,7 @@ func TestLoopProviderErrorRecorded(t *testing.T) {
 // still builds valid requests and succeeds.
 func TestLoopSessionRecoversAfterFailure(t *testing.T) {
 	p := &scriptedProvider{script: []llm.Message{
-		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "transient outage"},
-		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "transient outage"},
-		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "transient outage"},
+		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "authentication failed"},
 		{Role: llm.RoleAssistant, StopReason: llm.StopEndTurn, Content: []llm.Block{llm.TextBlock("back online")}},
 	}}
 	a := newTestAgent(p, &echoTool{})
@@ -257,7 +254,7 @@ func TestLoopProviderErrorRetried(t *testing.T) {
 	// A transient failure followed by success: only the successful turn
 	// lands in the transcript.
 	p := &scriptedProvider{script: []llm.Message{
-		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "transient"},
+		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "service unavailable"},
 		{Role: llm.RoleAssistant, StopReason: llm.StopEndTurn, Content: []llm.Block{llm.TextBlock("recovered")}},
 	}}
 	a := newTestAgent(p, &echoTool{})
@@ -273,6 +270,46 @@ func TestLoopProviderErrorRetried(t *testing.T) {
 	last := msgs[len(msgs)-1]
 	if last.StopReason == llm.StopError || last.Content[0].Text != "recovered" {
 		t.Fatalf("tail = %+v", last)
+	}
+}
+
+// A stream truncated before the provider's terminal marker is transient
+// (the openai-compat adapter reports "stream ended before a terminal
+// event"): it must be retried like other provider-side failures.
+func TestLoopStreamTruncationRetried(t *testing.T) {
+	p := &scriptedProvider{script: []llm.Message{
+		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "stream ended before a terminal event"},
+		{Role: llm.RoleAssistant, StopReason: llm.StopEndTurn, Content: []llm.Block{llm.TextBlock("recovered")}},
+	}}
+	a := newTestAgent(p, &echoTool{})
+	tr, _ := a.NewSession("t")
+	if _, runErr := collect(t, a, tr, "go"); runErr != nil {
+		t.Fatal(runErr)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.calls != 2 {
+		t.Fatalf("provider calls = %d, want 2 (retry after truncation)", p.calls)
+	}
+}
+
+// A mid-body transport drop arrives as the same pi wording with the Go
+// cause appended (llm.ReadSSE wraps, e.g. "...: sse: unexpected EOF"):
+// it must retry identically to the bare truncation form.
+func TestLoopTransportDropRetried(t *testing.T) {
+	p := &scriptedProvider{script: []llm.Message{
+		{Role: llm.RoleAssistant, StopReason: llm.StopError, Error: "stream ended before a terminal event: sse: unexpected EOF"},
+		{Role: llm.RoleAssistant, StopReason: llm.StopEndTurn, Content: []llm.Block{llm.TextBlock("recovered")}},
+	}}
+	a := newTestAgent(p, &echoTool{})
+	tr, _ := a.NewSession("t")
+	if _, runErr := collect(t, a, tr, "go"); runErr != nil {
+		t.Fatal(runErr)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.calls != 2 {
+		t.Fatalf("provider calls = %d, want 2 (retry after transport drop)", p.calls)
 	}
 }
 
@@ -354,7 +391,7 @@ func TestLoopBeforeHookBlocks(t *testing.T) {
 	}}
 	echo := &echoTool{}
 	a := newTestAgent(p, echo)
-	a.cfg.Before = func(call llm.Block) (bool, string) {
+	a.cfg.Before = func(_ context.Context, call llm.Block) (bool, string) {
 		var args struct {
 			Text string `json:"text"`
 		}
@@ -426,8 +463,7 @@ func TestLoopParallelExecution(t *testing.T) {
 		{Role: llm.RoleAssistant, StopReason: llm.StopEndTurn, Content: []llm.Block{llm.TextBlock("ok")}},
 	}}
 	echo := &echoTool{delay: 150 * time.Millisecond}
-	a := newTestAgent(p, echo)
-	a.cfg.Parallel = true
+	a := newTestAgent(p, echo) // tool execution is parallel by default (pi)
 	tr, _ := a.NewSession("t")
 	start := time.Now()
 	_, runErr := collect(t, a, tr, "go")
@@ -437,10 +473,12 @@ func TestLoopParallelExecution(t *testing.T) {
 	if time.Since(start) >= 290*time.Millisecond {
 		t.Fatalf("parallel execution took %v — looks sequential", time.Since(start))
 	}
-	// Results appended in call order regardless of completion order.
-	tail := tr.Messages()[len(tr.Messages())-2] // tool message
-	if tail.Content[0].ID != "c1" || tail.Content[1].ID != "c2" {
-		t.Fatalf("result order = %s, %s", tail.Content[0].ID, tail.Content[1].ID)
+	// Results appended in call order regardless of completion order —
+	// one toolResult message per call (pi's shape).
+	msgs := tr.Messages()
+	res1, res2 := msgs[len(msgs)-3], msgs[len(msgs)-2]
+	if res1.Role != llm.RoleTool || res1.Content[0].ID != "c1" || res2.Content[0].ID != "c2" {
+		t.Fatalf("result order = %+v, %+v", res1, res2)
 	}
 }
 
@@ -469,24 +507,6 @@ func TestLoopUnknownToolSelfHeals(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("unknown tool did not produce a self-healing error result")
-	}
-}
-
-func TestLoopTurnLimit(t *testing.T) {
-	script := make([]llm.Message, 100)
-	for i := range script {
-		script[i] = llm.Message{
-			Role: llm.RoleAssistant, StopReason: llm.StopToolUse,
-			Content: []llm.Block{{Kind: llm.BlockToolCall, ID: fmt.Sprintf("c%d", i), Name: "echo", Arguments: json.RawMessage(`{"text":"x"}`)}},
-		}
-	}
-	p := &scriptedProvider{script: script}
-	a := newTestAgent(p, &echoTool{})
-	a.cfg.MaxTurns = 3
-	tr, _ := a.NewSession("t")
-	_, runErr := collect(t, a, tr, "go")
-	if runErr == nil || !strings.Contains(runErr.Error(), "turn limit") {
-		t.Fatalf("runErr = %v", runErr)
 	}
 }
 
@@ -575,17 +595,69 @@ func TestRegistryDeterministicOrder(t *testing.T) {
 	}
 }
 
-func TestValidateArguments(t *testing.T) {
-	if err := validateArguments(nil); err != nil {
+// MCP generations swap tools from supervisor goroutines while the agent
+// loop reads (Get/Decls) from its own and parallel tool goroutines —
+// run with -race.
+func TestRegistryConcurrentAccess(t *testing.T) {
+	r := NewRegistry(&echoTool{})
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	for i := 0; i < 4; i++ { // readers: the agent loop's access patterns
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					r.Get("echo")
+					r.Get("mcp__srv__tool")
+					r.Decls()
+					r.Contributions()
+				}
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() { // writer: MCP generation swaps
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			r.Add(&mcpTool{name: "mcp__srv__tool"})
+			r.Remove("mcp__srv__tool")
+		}
+		close(stop)
+	}()
+	wg.Wait()
+}
+
+type mcpTool struct{ name string }
+
+func (m *mcpTool) Decl() llm.Tool {
+	return llm.Tool{Name: m.name, Description: "d", Parameters: json.RawMessage(`{"type":"object"}`)}
+}
+func (m *mcpTool) Execute(ToolContext, json.RawMessage) ToolResult { return TextResult("ok") }
+
+// pi's Value.Convert semantics: the coerced arguments are what the tool
+// executes with.
+func TestValidateArgumentsCoercion(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"limit":{"type":"integer"},"verbose":{"type":"boolean"},"name":{"type":"string"},"opt":{"type":"string"}},"required":["limit"]}`)
+	out, err := llm.ValidateArguments(schema, json.RawMessage(`{"limit":"42","verbose":"true","name":7,"opt":null}`))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := validateArguments(json.RawMessage(`{}`)); err != nil {
-		t.Fatal(err)
+	var got map[string]any
+	json.Unmarshal(out, &got)
+	if got["limit"] != float64(42) {
+		t.Fatalf("limit = %v (%T)", got["limit"], got["limit"])
 	}
-	if err := validateArguments(json.RawMessage(`[1,2]`)); err == nil {
-		t.Fatal("array arguments must be rejected")
+	if got["verbose"] != true {
+		t.Fatalf("verbose = %v", got["verbose"])
 	}
-	if err := validateArguments(json.RawMessage(`not json`)); err == nil {
-		t.Fatal("invalid JSON must be rejected")
+	if got["name"] != "7" {
+		t.Fatalf("name = %v", got["name"])
+	}
+	if _, present := got["opt"]; present {
+		t.Fatal("optional null must be deleted (normalizeOptionalNulls)")
 	}
 }

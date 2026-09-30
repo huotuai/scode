@@ -1,0 +1,51 @@
+# 打 tag 发版：git tag v0.1.0 && git push origin v0.1.0
+# 产物命名（scode-windows-<arch>.zip + checksums.txt）是 scode update 的下载约定，
+# zip 根目录直接放 scode.exe（internal/update/selfupdate.go 按文件名查找）。
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      # tag 即版本号（v0.1.0 → scode --version 显示 v0.1.0），
+      # 注入后 update.Newer 走语义化版本比较。
+      - name: Build and package
+        shell: pwsh
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          $v = "${{ github.ref_name }}"
+          foreach ($arch in @('amd64', 'arm64')) {
+            $env:GOARCH = $arch
+            go build -ldflags "-X main.version=$v" -o scode.exe ./cmd/scode
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            Compress-Archive -Path scode.exe -DestinationPath "scode-windows-$arch.zip" -Force
+            Remove-Item scode.exe
+          }
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem *.zip | ForEach-Object {
+            "$(($_.FullName | Get-FileHash -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Out-File -Encoding ascii checksums.txt
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.zip
+            checksums.txt

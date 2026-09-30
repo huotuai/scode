@@ -80,6 +80,10 @@ type wireRequest struct {
 // thinkingBudgets maps scode thinking levels to token budgets.
 var thinkingBudgets = map[string]int{"low": 2048, "medium": 8192, "high": 16384}
 
+// minAnswerTokens is the room always left for the answer when a thinking
+// budget shares the max_tokens ceiling (pi's MIN_ANSWER_TOKENS).
+const minAnswerTokens = 1024
+
 // BuildRequest converts a transcript into a Messages API request body.
 //
 // Cache strategy (pi's placement, ≤4 breakpoints): the last tool
@@ -131,89 +135,60 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 		})
 	}
 
-	// Messages: fold tool results into user messages, merge consecutive
-	// same-role messages (the API requires user/assistant alternation).
-	// tool_use ids without a matching tool_result are synthesized as error
-	// results — otherwise one aborted turn mid-tool bricks every later
-	// request with a 400 (pi's transform-messages does the same).
+	// Messages: the request-time transform drops errored/aborted turns
+	// and answers orphaned tool calls in place (pi's
+	// transform-messages). Consecutive tool-result messages group into
+	// ONE user message (pi's anthropic shape); everything else keeps
+	// its own message — no same-role merging.
+	msgs = llm.TransformMessages(msgs)
 	var wire []wireMessage
-	pending := map[string]bool{} // tool_use ids awaiting a result
-	var pendingOrder []string
 	for i := 1; i < len(msgs); i++ {
 		m := msgs[i]
 		switch m.Role {
 		case llm.RoleSystem:
 			continue // collapsed into top-level system above
-		case llm.RoleUser, llm.RoleTool:
-			role := "user"
+		case llm.RoleUser:
 			var blocks []wireBlock
 			for _, b := range m.Content {
 				if b.Kind == llm.BlockText && b.Text == "" {
 					continue // the API rejects empty text blocks
 				}
-				wb := convertOutgoingBlock(b)
-				if b.Kind == llm.BlockToolResult && b.ID != "" {
-					delete(pending, b.ID)
+				blocks = append(blocks, convertOutgoingBlock(b))
+			}
+			if len(blocks) == 0 {
+				continue
+			}
+			wire = append(wire, wireMessage{Role: "user", Content: blocks})
+		case llm.RoleTool:
+			var blocks []wireBlock
+			for ; i < len(msgs) && msgs[i].Role == llm.RoleTool; i++ {
+				for _, b := range msgs[i].Content {
+					if b.Kind != llm.BlockToolResult {
+						continue
+					}
+					blocks = append(blocks, convertOutgoingBlock(b))
 				}
-				blocks = append(blocks, wb)
 			}
-			if n := len(wire); n > 0 && wire[n-1].Role == role {
-				wire[n-1].Content = append(wire[n-1].Content, blocks...)
-			} else {
-				wire = append(wire, wireMessage{Role: role, Content: blocks})
-			}
+			i--
+			wire = append(wire, wireMessage{Role: "user", Content: blocks})
 		case llm.RoleAssistant:
 			var blocks []wireBlock
 			for _, b := range m.Content {
 				if b.Kind == llm.BlockText && b.Text == "" {
 					continue // the API rejects empty text blocks
 				}
-				wb := convertOutgoingBlock(b)
-				if b.Kind == llm.BlockToolCall && b.ID != "" {
-					if !pending[b.ID] {
-						pending[b.ID] = true
-						pendingOrder = append(pendingOrder, b.ID)
-					}
-				}
-				blocks = append(blocks, wb)
+				blocks = append(blocks, convertOutgoingBlock(b))
 			}
 			if len(blocks) == 0 {
-				if m.Error == "" {
-					return nil, fmt.Errorf("assistant message %d has no wireable content", i)
-				}
-				// Recorded failure turns (including legacy content-less
-				// ones) replay as plain text instead of poisoning the
-				// session.
-				blocks = []wireBlock{{Type: "text", Text: "[turn failed: " + m.Error + "]"}}
+				continue
 			}
-			if n := len(wire); n > 0 && wire[n-1].Role == "assistant" {
-				wire[n-1].Content = append(wire[n-1].Content, blocks...)
-			} else {
-				wire = append(wire, wireMessage{Role: "assistant", Content: blocks})
-			}
+			wire = append(wire, wireMessage{Role: "assistant", Content: blocks})
 		default:
 			return nil, fmt.Errorf("message %d: unknown role %q", i, m.Role)
 		}
 	}
 	if len(wire) == 0 {
 		return nil, fmt.Errorf("transcript has no conversation messages")
-	}
-	if len(pendingOrder) > 0 {
-		var synth []wireBlock
-		for _, id := range pendingOrder {
-			if !pending[id] {
-				continue
-			}
-			synth = append(synth, wireBlock{
-				Type:      "tool_result",
-				ToolUseID: id,
-				Content:   []wireBlock{{Type: "text", Text: "No result provided (the turn was interrupted)."}},
-				IsError:   true,
-			})
-		}
-		if len(synth) > 0 {
-			wire = append(wire, wireMessage{Role: "user", Content: synth})
-		}
 	}
 
 	// Breakpoint on the tail block of the last user message: conversation
@@ -227,9 +202,43 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 		}
 	}
 
+	// pi's buildBaseOptions: the caller's cap wins; otherwise the model's
+	// catalog cap; otherwise a flat fallback.
+	callerCap := opts.MaxTokens > 0
 	maxTokens := opts.MaxTokens
 	if maxTokens == 0 {
+		maxTokens = model.MaxTokens
+	}
+	if maxTokens == 0 {
 		maxTokens = DefaultMaxOut
+	}
+
+	level := opts.ThinkingLevel
+	thinking := level != "" && level != "off"
+	var budget int
+	if thinking {
+		b, ok := thinkingBudgets[level]
+		if !ok {
+			return nil, fmt.Errorf("unknown thinking level %q", level)
+		}
+		budget = b
+		// pi's adjustMaxTokensForThinking: when the caller set an output
+		// cap the budget rides on top of it (thinking AND answer must
+		// fit); without a caller cap thinking fits inside the model cap.
+		// Either way the model cap bounds the total and minAnswerTokens
+		// always remain for the answer.
+		if callerCap {
+			maxTokens += budget
+		}
+		if model.MaxTokens > 0 && maxTokens > model.MaxTokens {
+			maxTokens = model.MaxTokens
+		}
+		if room := maxTokens - minAnswerTokens; budget > room {
+			budget = room
+		}
+		if budget <= 0 {
+			return nil, fmt.Errorf("max_tokens %d leaves no room for a thinking budget", maxTokens)
+		}
 	}
 
 	req := &wireRequest{
@@ -241,15 +250,7 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 		Messages:  wire,
 	}
 
-	level := opts.ThinkingLevel
-	if level != "" && level != "off" {
-		budget, ok := thinkingBudgets[level]
-		if !ok {
-			return nil, fmt.Errorf("unknown thinking level %q", level)
-		}
-		if budget >= maxTokens {
-			return nil, fmt.Errorf("thinking budget %d must be below max_tokens %d", budget, maxTokens)
-		}
+	if thinking {
 		req.Thinking = &wireThinking{Type: "enabled", BudgetTokens: budget}
 		// The API rejects temperature alongside extended thinking.
 		req.Temperature = nil

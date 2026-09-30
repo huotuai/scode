@@ -1,0 +1,97 @@
+/* Approval cards replace the composer while a request is pending: the
+   host takes the input's exact footprint (880px column, same paddings)
+   so the swap reads as the same slot changing content, not a new box.
+   Answered → App re-renders the Composer in its place. */
+
+.approval-host {
+  flex-shrink: 0;
+  width: 100%;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 8px 24px 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Neutral card like the reference: quiet border, soft shadow, no alarm
+   colors on the chrome (the icon chip carries the semantic color). */
+.approval-card {
+  background: var(--surface-raised, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px 16px;
+  box-shadow: var(--shadow-md);
+}
+
+.approval-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  font-size: calc(var(--ui-font-size) + 1px);
+  color: var(--text);
+  margin-bottom: 12px;
+}
+.approval-title .approval-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  flex-shrink: 0;
+}
+
+.approval-detail {
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: calc(var(--ui-font-size) - 1.5px);
+  word-break: break-all;
+  color: var(--text);
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-bottom: 4px;
+}
+
+.approval-plan {
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--surface-3);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin: 0 0 4px;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: calc(var(--ui-font-size) - 2px);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
+/* dialog-style action row: buttons right-aligned, primary last-click */
+.approval-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  align-items: center;
+  justify-content: flex-end;
+}
+.approval-row input {
+  flex: 1;
+  min-width: 160px;
+  padding: 5px 10px;
+  font-size: calc(var(--ui-font-size) - 1.5px);
+  margin-right: auto; /* feedback input keeps the left side */
+}
+
+.approval-justification {
+  font-size: calc(var(--ui-font-size) - 1.5px);
+  color: var(--text-2);
+  font-style: italic;
+  margin-top: 4px;
+}

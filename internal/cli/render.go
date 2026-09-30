@@ -9,13 +9,14 @@ import (
 )
 
 // Renderer streams agent events to a terminal. Assistant text flows to
-// Out (stdout); tool activity and errors to Err (stderr) so print mode
-// stays pipeable.
+// Out (stdout); thinking, tool activity and errors to Err (stderr) so
+// print mode stays pipeable.
 type Renderer struct {
 	Out io.Writer
 	Err io.Writer
 
-	inText bool // inside an assistant text block
+	inText     bool // inside an assistant text block
+	inThinking bool // inside a thinking block
 }
 
 func (r *Renderer) Handle(ev agent.Event) {
@@ -32,6 +33,14 @@ func (r *Renderer) Handle(ev agent.Event) {
 			if r.inText {
 				fmt.Fprint(r.Out, "\n")
 				r.inText = false
+			}
+		case llm.EventThinkingDelta:
+			fmt.Fprint(r.Err, ev.LLM.Delta)
+			r.inThinking = true
+		case llm.EventThinkingEnd:
+			if r.inThinking {
+				fmt.Fprint(r.Err, "\n")
+				r.inThinking = false
 			}
 		}
 	case agent.EvToolStart:

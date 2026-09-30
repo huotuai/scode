@@ -69,12 +69,17 @@ type assembler struct {
 	toolCalls map[int]*liveToolCall
 	text      strings.Builder
 	think     strings.Builder
-	started   bool
-	usage     llm.Usage
-	finished  string // finish_reason
-	hadText   bool
-	hadThink  bool
-	err       string
+	// thinkField records WHICH dialect key the reasoning stream arrived
+	// under (reasoning_content / reasoning / reasoning_text) — pi's
+	// thinkingSignature. It rides the finished block's Signature so the
+	// request builder can replay the thinking under the same field.
+	thinkField string
+	started    bool
+	usage      llm.Usage
+	finished   string // finish_reason
+	hadText    bool
+	hadThink   bool
+	err        string
 }
 
 func newAssembler(model string) *assembler {
@@ -108,7 +113,7 @@ func (a *assembler) snapshot() llm.Message {
 		out.Content = append(out.Content, b)
 	}
 	if a.think.Len() > 0 {
-		out.Content = append(out.Content, llm.Block{Kind: llm.BlockThinking, Text: a.think.String()})
+		out.Content = append(out.Content, llm.Block{Kind: llm.BlockThinking, Text: a.think.String(), Signature: a.thinkField})
 	}
 	out.StopReason = mapFinish(a.finished)
 	if a.err != "" {
@@ -118,43 +123,29 @@ func (a *assembler) snapshot() llm.Message {
 	return out
 }
 
-// toJSONString re-emits raw fragment-accumulated arguments compactly; if
-// the fragments never formed valid JSON the raw text passes through.
+// toJSONString re-emits raw fragment-accumulated arguments compactly.
+// Fragments that never formed valid JSON (truncated streams, relay
+// quirks) are wrapped as a JSON string so the block is always
+// marshalable; argument validation then rejects it cleanly.
 func toJSONString(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return "{}"
 	}
 	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return string(raw)
+	if err := json.Unmarshal(raw, &v); err == nil {
+		if b, err := json.Marshal(v); err == nil {
+			return string(b)
+		}
 	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return string(raw)
+	if b, err := json.Marshal(string(raw)); err == nil {
+		return string(b)
 	}
-	return string(b)
+	return "{}"
 }
 
 func (a *assembler) handle(data string) ([]llm.Event, bool, error) {
 	if data == "[DONE]" {
-		// The protocol signals no block boundaries; synthesize end events
-		// so consumers see the same lifecycle as the Anthropic adapter.
-		var events []llm.Event
-		if a.hadText {
-			events = append(events, llm.Event{Type: llm.EventTextEnd})
-		}
-		if a.hadThink {
-			events = append(events, llm.Event{Type: llm.EventThinkingEnd})
-		}
-		events = append(events, a.toolCallEnds()...)
-		msg := a.snapshot()
-		if a.err != "" {
-			// Some compat providers (GLM) report mid-generation failures
-			// as an error-ish finish_reason with empty content.
-			return append(events, llm.Event{Type: llm.EventError, Message: &msg, Reason: llm.StopError, Err: fmt.Errorf("%s", a.err)}), true, nil
-		}
-		events = append(events, llm.Event{Type: llm.EventDone, Message: &msg, Reason: msg.StopReason})
-		return events, true, nil
+		return a.conclude(), true, nil
 	}
 	var c chatChunk
 	if err := json.Unmarshal([]byte(data), &c); err != nil {
@@ -181,7 +172,10 @@ func (a *assembler) handle(data string) ([]llm.Event, bool, error) {
 			a.text.WriteString(ch.Delta.Content)
 			events = append(events, llm.Event{Type: llm.EventTextDelta, Delta: ch.Delta.Content})
 		}
-		if reasoning := firstNonEmpty(ch.Delta.Reasoning, ch.Delta.ReasoningAlt, ch.Delta.ReasoningLlm); reasoning != "" {
+		if field, reasoning := reasoningDelta(ch.Delta.Reasoning, ch.Delta.ReasoningAlt, ch.Delta.ReasoningLlm); reasoning != "" {
+			if a.thinkField == "" {
+				a.thinkField = field // first-seen field wins (pi's ensureThinkingBlock)
+			}
 			if !a.hadThink {
 				a.hadThink = true
 				events = append(events, llm.Event{Type: llm.EventThinkingStart})
@@ -235,13 +229,42 @@ func (a *assembler) handle(data string) ([]llm.Event, bool, error) {
 	return events, false, nil
 }
 
-func firstNonEmpty(ss ...string) string {
-	for _, s := range ss {
-		if s != "" {
-			return s
-		}
+// conclude synthesizes the terminal event sequence (block boundaries +
+// done/error) the Anthropic adapter defines. The protocol signals no block
+// boundaries, so they are fabricated here. Called on [DONE] and, for streams
+// that close without the sentinel, whenever a finish_reason already proved
+// generation completed (see Provider.pump).
+func (a *assembler) conclude() []llm.Event {
+	var events []llm.Event
+	if a.hadText {
+		events = append(events, llm.Event{Type: llm.EventTextEnd})
 	}
-	return ""
+	if a.hadThink {
+		events = append(events, llm.Event{Type: llm.EventThinkingEnd})
+	}
+	events = append(events, a.toolCallEnds()...)
+	msg := a.snapshot()
+	if a.err != "" {
+		// Some compat providers (GLM) report mid-generation failures
+		// as an error-ish finish_reason with empty content.
+		return append(events, llm.Event{Type: llm.EventError, Message: &msg, Reason: llm.StopError, Err: fmt.Errorf("%s", a.err)})
+	}
+	return append(events, llm.Event{Type: llm.EventDone, Message: &msg, Reason: msg.StopReason})
+}
+
+// reasoningDelta picks the reasoning payload out of a stream delta and
+// reports which dialect key carried it (pi's reasoningFields priority:
+// reasoning_content, then reasoning, then reasoning_text).
+func reasoningDelta(content, alt, llm string) (field, text string) {
+	switch {
+	case content != "":
+		return "reasoning_content", content
+	case alt != "":
+		return "reasoning", alt
+	case llm != "":
+		return "reasoning_text", llm
+	}
+	return "", ""
 }
 
 func firstNonZero(ns ...int64) int64 {

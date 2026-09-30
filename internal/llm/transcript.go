@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -14,6 +15,7 @@ import (
 // this package ever edits an existing entry. Prefix byte-stability is the
 // load-bearing property — see the package comment.
 type Transcript struct {
+	mu       sync.Mutex // appends (agent loop) race with readers (incremental persist)
 	messages []Message
 }
 
@@ -60,6 +62,8 @@ func (t *Transcript) Append(m Message) error {
 			return fmt.Errorf("leading system message cannot remove tools")
 		}
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.messages = append(t.messages, m)
 	return nil
 }
@@ -76,13 +80,19 @@ func (t *Transcript) AppendNow(m Message) error {
 // Messages returns a defensive copy of the transcript so callers cannot
 // violate append-only-ness through the returned slice.
 func (t *Transcript) Messages() []Message {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	out := make([]Message, len(t.messages))
 	copy(out, t.messages)
 	return out
 }
 
 // Len returns the number of messages.
-func (t *Transcript) Len() int { return len(t.messages) }
+func (t *Transcript) Len() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.messages)
+}
 
 // CanonicalBytes serializes the first n messages deterministically. Struct
 // fields marshal in declaration order and there are no maps on the message

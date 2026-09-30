@@ -9,8 +9,11 @@ import (
 )
 
 func sysEntry() Entry {
-	m := llm.Message{Role: llm.RoleSystem, Content: []llm.Block{llm.TextBlock("sys")}, ToolsAdded: []llm.Tool{{Name: "read"}}}
-	return MsgEntry(m)
+	return MsgEntry(testSysMsg())
+}
+
+func testSysMsg() llm.Message {
+	return llm.Message{Role: llm.RoleSystem, Content: []llm.Block{llm.TextBlock("sys")}, ToolsAdded: []llm.Tool{{Name: "read"}}}
 }
 
 func userEntry(text string, ts int64) Entry {
@@ -20,7 +23,9 @@ func userEntry(text string, ts int64) Entry {
 func TestProjectWithoutMarker(t *testing.T) {
 	entries := []Entry{sysEntry(), userEntry("a", 1), userEntry("b", 2)}
 	msgs := Project(entries)
-	if len(msgs) != 3 || msgs[1].Content[0].Text != "a" {
+	// Legacy stored system messages are skipped: storage is
+	// conversation-only, the prompt is rebuilt at load.
+	if len(msgs) != 2 || msgs[0].Content[0].Text != "a" {
 		t.Fatalf("msgs = %+v", msgs)
 	}
 }
@@ -35,13 +40,10 @@ func TestProjectWithMarker(t *testing.T) {
 		userEntry("new1", 3),
 	}
 	msgs := Project(entries)
-	if len(msgs) != 3 {
-		t.Fatalf("len = %d, want 3 (system, summary, tail): %+v", len(msgs), msgs)
+	if len(msgs) != 2 {
+		t.Fatalf("len = %d, want 2 (summary, tail): %+v", len(msgs), msgs)
 	}
-	if msgs[0].Role != llm.RoleSystem {
-		t.Fatalf("leading = %+v", msgs[0])
-	}
-	summary := msgs[1]
+	summary := msgs[0]
 	if summary.Role != llm.RoleUser {
 		t.Fatalf("summary role = %s", summary.Role)
 	}
@@ -51,8 +53,8 @@ func TestProjectWithMarker(t *testing.T) {
 			t.Fatalf("summary missing %q: %q", want, text)
 		}
 	}
-	if msgs[2].Content[0].Text != "new1" {
-		t.Fatalf("tail = %+v", msgs[2])
+	if msgs[1].Content[0].Text != "new1" {
+		t.Fatalf("tail = %+v", msgs[1])
 	}
 }
 
@@ -67,14 +69,14 @@ func TestProjectOnlyNewestMarkerCounts(t *testing.T) {
 		userEntry("tail", 2),
 	}
 	msgs := Project(entries)
-	if len(msgs) != 3 {
+	if len(msgs) != 2 {
 		t.Fatalf("len = %d", len(msgs))
 	}
-	if !strings.Contains(msgs[1].Content[0].Text, "second summary") || strings.Contains(msgs[1].Content[0].Text, "first summary") {
-		t.Fatalf("wrong summary used: %q", msgs[1].Content[0].Text)
+	if !strings.Contains(msgs[0].Content[0].Text, "second summary") || strings.Contains(msgs[0].Content[0].Text, "first summary") {
+		t.Fatalf("wrong summary used: %q", msgs[0].Content[0].Text)
 	}
-	if msgs[2].Content[0].Text != "tail" {
-		t.Fatalf("tail after newest marker wrong: %+v", msgs[2])
+	if msgs[1].Content[0].Text != "tail" {
+		t.Fatalf("tail after newest marker wrong: %+v", msgs[1])
 	}
 }
 
@@ -159,7 +161,7 @@ func TestJSONLRoundTripWithCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess, err := s.Create("c1", "/p", "anthropic", "m")
+	sess, err := s.Create("c1", "/p")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,10 +172,10 @@ func TestJSONLRoundTripWithCompaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker := NewCompaction("summary text", []string{"x.go"}, nil)
-	if err := sess.AppendEntry(Entry{Compaction: &marker}); err != nil {
+	if _, err := sess.AppendEntry(Entry{Compaction: &marker}); err != nil {
 		t.Fatal(err)
 	}
-	if err := sess.Append(llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("u2")}, TS: 2}); err != nil {
+	if _, err := sess.Append(llm.Message{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("u2")}, TS: 2}); err != nil {
 		t.Fatal(err)
 	}
 	if err := sess.Close(); err != nil {
@@ -184,24 +186,24 @@ func TestJSONLRoundTripWithCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rec.Entries) != 4 {
-		t.Fatalf("entries = %d", len(rec.Entries))
+	if len(rec.Path()) != 4 {
+		t.Fatalf("entries = %d", len(rec.Path()))
 	}
-	if rec.Entries[2].Compaction == nil || rec.Entries[2].Compaction.Summary != "summary text" {
-		t.Fatalf("marker entry = %+v", rec.Entries[2])
+	if rec.Path()[2].Compaction == nil || rec.Path()[2].Compaction.Summary != "summary text" {
+		t.Fatalf("marker entry = %+v", rec.Path()[2])
 	}
 	ops := rec.LatestFileOps()
 	if len(ops.Read) != 1 || ops.Read[0] != "x.go" {
 		t.Fatalf("LatestFileOps = %+v", ops)
 	}
 	msgs := rec.Project()
-	if len(msgs) != 3 { // system, summary-user, u2
+	if len(msgs) != 2 { // summary-user, u2 (the stored legacy system line is skipped)
 		t.Fatalf("projected = %d msgs: %+v", len(msgs), msgs)
 	}
-	if msgs[2].Content[0].Text != "u2" {
-		t.Fatalf("tail = %+v", msgs[2])
+	if msgs[1].Content[0].Text != "u2" {
+		t.Fatalf("tail = %+v", msgs[1])
 	}
-	tr, err := rec.Transcript()
+	tr, err := rec.Transcript(testSysMsg())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,5 +221,90 @@ func TestMessageLineWithoutRoleRejected(t *testing.T) {
 	}
 	if _, err := parseEntry(`{"role":"user","content":[{"kind":"text","text":"x"}]}`); err != nil {
 		t.Fatalf("message line must parse: %v", err)
+	}
+}
+
+func TestFindCutPoint(t *testing.T) {
+	big := strings.Repeat("x", 400) // 100 estimated tokens
+	entries := []Entry{
+		userEntry("start the task", 1),
+		MsgEntry(llm.Message{Role: llm.RoleAssistant, StopReason: llm.StopToolUse, TS: 2, Content: []llm.Block{
+			{Kind: llm.BlockToolCall, ID: "c1", Name: "read", Arguments: json.RawMessage(`{"path":"f"}`)},
+		}}),
+		MsgEntry(llm.Message{Role: llm.RoleTool, TS: 3, Content: []llm.Block{
+			{Kind: llm.BlockToolResult, ID: "c1", Content: []llm.Block{llm.TextBlock(big)}},
+		}}),
+		MsgEntry(llm.Message{Role: llm.RoleAssistant, StopReason: llm.StopEndTurn, TS: 4, Content: []llm.Block{llm.TextBlock("done")}}),
+	}
+
+	// Keep 50 tokens: the 100-token tool result overshoots alone; the cut
+	// must skip PAST it (never at a tool result) to the assistant message.
+	if cut := FindCutPoint(entries, 50); cut != 3 {
+		t.Fatalf("cut = %d, want 3 (assistant, never a tool result)", cut)
+	}
+	// Keep more than everything: nothing to summarize.
+	if cut := FindCutPoint(entries, 1_000_000); cut != 0 {
+		t.Fatalf("cut = %d, want 0", cut)
+	}
+	// Non-positive keep: total compaction.
+	if cut := FindCutPoint(entries, 0); cut != len(entries) {
+		t.Fatalf("cut = %d, want %d (keep nothing)", cut, len(entries))
+	}
+}
+
+func TestProjectPartialCompaction(t *testing.T) {
+	marker := NewCompaction("old stuff summarized", nil, nil)
+	marker.TokensBefore = 12345
+	entries := []Entry{
+		func() Entry { e := userEntry("old1", 1); e.ID = "e1"; return e }(),
+		func() Entry { e := userEntry("old2", 2); e.ID = "e2"; return e }(),
+		func() Entry { e := userEntry("kept1", 3); e.ID = "e3"; return e }(),
+		{Compaction: &marker},
+		func() Entry { e := userEntry("new1", 4); e.ID = "e5"; return e }(),
+	}
+	marker.FirstKeptEntryID = "e3" // pi's firstKeptEntryId
+	msgs := Project(entries)
+	if len(msgs) != 3 {
+		t.Fatalf("len = %d, want 3 (summary, kept1, new1): %+v", len(msgs), msgs)
+	}
+	if !strings.Contains(msgs[0].Content[0].Text, "old stuff summarized") {
+		t.Fatalf("summary = %q", msgs[0].Content[0].Text)
+	}
+	if msgs[1].Content[0].Text != "kept1" || msgs[2].Content[0].Text != "new1" {
+		t.Fatalf("tail = %+v", msgs[1:])
+	}
+
+	// Round-trip: the new fields survive serialization.
+	line, _ := json.Marshal(marker)
+	var back CompactionEntry
+	if err := json.Unmarshal(line, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.FirstKeptEntryID != "e3" || back.TokensBefore != 12345 {
+		t.Fatalf("round-trip = %+v", back)
+	}
+}
+
+func TestEstimateContextTokens(t *testing.T) {
+	big := strings.Repeat("x", 400) // 100 estimated tokens
+	usage := &llm.Usage{Input: 1000, Output: 10}
+	msgs := []llm.Message{
+		{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("hi")}},
+		{Role: llm.RoleAssistant, StopReason: llm.StopEndTurn, Usage: usage, Content: []llm.Block{llm.TextBlock("ok")}},
+		{Role: llm.RoleTool, Content: []llm.Block{{Kind: llm.BlockToolResult, ID: "c", Content: []llm.Block{llm.TextBlock(big)}}}},
+	}
+	// 1010 from usage + 100 trailing estimate.
+	if got := EstimateContextTokens(msgs); got != 1110 {
+		t.Fatalf("estimate = %d, want 1110", got)
+	}
+
+	// Error/aborted usages are skipped in favor of the last VALID one;
+	// the trailing error message still counts as an estimate.
+	msgs2 := []llm.Message{
+		{Role: llm.RoleAssistant, StopReason: llm.StopEndTurn, Usage: usage, Content: []llm.Block{llm.TextBlock("ok")}},
+		{Role: llm.RoleAssistant, StopReason: llm.StopError, Usage: &llm.Usage{Input: 999_999}, Content: []llm.Block{llm.TextBlock("x")}},
+	}
+	if got := EstimateContextTokens(msgs2); got != 1011 {
+		t.Fatalf("estimate with error tail = %d, want 1011", got)
 	}
 }

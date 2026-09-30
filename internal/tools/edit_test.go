@@ -170,7 +170,7 @@ func TestEditToolPreservesBOM(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bom.txt")
 	os.WriteFile(path, []byte("\uFEFFalpha beta\n"), 0o644) //nolint:errcheck
-	res := (EditTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{
+	res := (EditTool{}).Execute(unfencedCtx(dir), mustArgs(t, map[string]any{
 		"path":  "bom.txt",
 		"edits": []any{map[string]any{"oldText": "alpha", "newText": "gamma"}},
 	}))
@@ -207,7 +207,7 @@ func TestEditToolCRLFFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("package main\r\n\r\nfunc main() {\r\n}\r\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	res := (EditTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{
+	res := (EditTool{}).Execute(unfencedCtx(dir), mustArgs(t, map[string]any{
 		"path":  "file.go",
 		"edits": []any{map[string]any{"oldText": "func main() {", "newText": "func main() int {"}},
 	}))
@@ -230,7 +230,7 @@ func TestEditToolArgRepairs(t *testing.T) {
 	os.WriteFile(path, []byte("alpha beta\n"), 0o644) //nolint:errcheck
 
 	// edits as JSON string (the model quoted the array)
-	res := (EditTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{
+	res := (EditTool{}).Execute(unfencedCtx(dir), mustArgs(t, map[string]any{
 		"path":  "f.txt",
 		"edits": `[{"oldText":"alpha","newText":"gamma"}]`,
 	}))
@@ -240,7 +240,7 @@ func TestEditToolArgRepairs(t *testing.T) {
 
 	// single edit object
 	os.WriteFile(path, []byte("alpha beta\n"), 0o644) //nolint:errcheck
-	res = (EditTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{
+	res = (EditTool{}).Execute(unfencedCtx(dir), mustArgs(t, map[string]any{
 		"path":  "f.txt",
 		"edits": map[string]any{"oldText": "alpha", "newText": "delta"},
 	}))
@@ -250,7 +250,7 @@ func TestEditToolArgRepairs(t *testing.T) {
 
 	// flat legacy form
 	os.WriteFile(path, []byte("alpha beta\n"), 0o644) //nolint:errcheck
-	res = (EditTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{
+	res = (EditTool{}).Execute(unfencedCtx(dir), mustArgs(t, map[string]any{
 		"path":    "f.txt",
 		"oldText": "alpha",
 		"newText": "epsilon",
@@ -268,7 +268,7 @@ func TestEditToolChineseExact(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "zh.txt")
 	os.WriteFile(path, []byte("第一行\n第二行内容\n第三行\n"), 0o644) //nolint:errcheck
-	res := (EditTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{
+	res := (EditTool{}).Execute(unfencedCtx(dir), mustArgs(t, map[string]any{
 		"path":  "zh.txt",
 		"edits": []any{map[string]any{"oldText": "第二行内容", "newText": "第二行已修改"}},
 	}))

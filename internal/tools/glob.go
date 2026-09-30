@@ -109,3 +109,8 @@ func matchIgnorePattern(pattern, relSlash string) bool {
 	}
 	return false
 }
+
+// PromptContribution is pi's findToolSystemPromptContribution.
+func (FindTool) PromptContribution() (string, []string) {
+	return "Find files by glob pattern (respects .gitignore)", nil
+}

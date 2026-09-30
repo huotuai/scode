@@ -77,6 +77,9 @@ func TestEndToEndFixBug(t *testing.T) {
 		Model:    llm.Model{ID: "test", Provider: "scripted"},
 		Tools:    tools.NewCodingRegistry(),
 		CWD:      dir,
+		// Unfenced on purpose: this test exercises the edit path, not the
+		// sandbox, and an absent policy is fail-closed by contract.
+		Sandbox: func() *agent.SandboxPolicy { return agent.UnfencedPolicy(dir) },
 	})
 	tr, err := a.NewSession("You fix bugs.")
 	if err != nil {

@@ -3,3 +3,17 @@ dist/
 *.test
 *.out
 coverage.txt
+desktop/node_modules/
+desktop/dist-renderer/
+
+# Local junk: stray build caches, accidental redirection artifacts, dist copies
+.gocache/
+%CD%.gocachetmp/
+distcopy/
+NUL
+desktop/nul
+desktop/release/
+desktop/tmp-*.js
+
+# Volatile plan scratch from tooling
+.zcode/plans/

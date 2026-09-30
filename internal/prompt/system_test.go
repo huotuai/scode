@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"scode/internal/llm"
+	"scode/internal/skills"
 )
 
 func TestFindInstructionsOrder(t *testing.T) {
@@ -56,7 +57,7 @@ func TestBuildStableSections(t *testing.T) {
 	proj := t.TempDir()
 	os.WriteFile(filepath.Join(proj, "AGENTS.md"), []byte("use Go 1.26"), 0o644) //nolint:errcheck
 
-	m := Build(cfg, proj, nil)
+	m := Build(cfg, proj, nil, nil)
 	if m.Role != llm.RoleSystem || m.TS != 0 {
 		t.Fatalf("message = %+v", m)
 	}
@@ -69,7 +70,7 @@ func TestBuildStableSections(t *testing.T) {
 		names = append(names, s.Name)
 		values[s.Name] = s.Value
 	}
-	want := []string{"rules", "cwd", "project_context"}
+	want := []string{"tools", "rules", "project_context", "cwd"}
 	if len(names) != len(want) {
 		t.Fatalf("sections = %v", names)
 	}
@@ -84,9 +85,52 @@ func TestBuildStableSections(t *testing.T) {
 	if !strings.Contains(values["project_context"], "<project_instructions") {
 		t.Fatal("instruction wrapper missing")
 	}
-	// Cache rule: no volatile content in the scode-controlled sections.
-	controlled := m.Content[0].Text + rulesText + values["cwd"]
-	if strings.Contains(controlled, "2026") || strings.Contains(controlled, "git status") {
+	// Cache rule: no volatile content in the controlled sections.
+	controlled := m.Content[0].Text + values["tools"] + values["rules"] + values["cwd"]
+	if strings.Contains(controlled, "git status") {
 		t.Fatal("volatile content leaked into the prompt")
+	}
+}
+
+func TestBuildSkillsSection(t *testing.T) {
+	cfg := t.TempDir()
+	proj := t.TempDir()
+
+	list := []skills.Skill{
+		{Name: "pdf-tools", Description: "PDF work", FilePath: "/x/pdf/SKILL.md"},
+		{Name: "hidden", Description: "h", FilePath: "/x/h/SKILL.md", DisableModelInvocation: true},
+	}
+	m := Build(cfg, proj, nil, list)
+	values := map[string]string{}
+	var names []string
+	for _, s := range m.Sections {
+		names = append(names, s.Name)
+		values[s.Name] = s.Value
+	}
+	sp := values["skills"]
+	if !strings.Contains(sp, "<available_skills>") || !strings.Contains(sp, "<name>pdf-tools</name>") {
+		t.Fatalf("skills section = %q", sp)
+	}
+	if strings.Contains(sp, "hidden") {
+		t.Fatalf("disable-model-invocation must be excluded: %q", sp)
+	}
+	// pi's section order: skills lands between project_context and cwd.
+	// (No project_context here: tools, rules, skills, cwd.)
+	want := []string{"tools", "rules", "skills", "cwd"}
+	if len(names) != len(want) {
+		t.Fatalf("sections = %v", names)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Fatalf("section order = %v, want %v", names, want)
+		}
+	}
+
+	// No skills: no section.
+	m = Build(cfg, proj, nil, nil)
+	for _, s := range m.Sections {
+		if s.Name == "skills" {
+			t.Fatal("skills section must be omitted when empty")
+		}
 	}
 }

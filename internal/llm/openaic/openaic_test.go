@@ -44,6 +44,163 @@ func model() llm.Model {
 	return llm.Model{ID: "gpt-x", Provider: "openai-compat", APIShape: "openai-completions"}
 }
 
+// pi's compat.supportsMidConvoSystemMessages: off (default) folds
+// system deltas into the head; on, the head is the LEADING message
+// alone and deltas ride in place — the head stays byte-stable across
+// mid-session toggles.
+func TestMidConvoSystemMessages(t *testing.T) {
+	mk := func(t *testing.T) *llm.Transcript {
+		tr, err := llm.NormalizeContext(llm.Context{
+			SystemPrompt: "base prompt",
+			Messages: []llm.Message{
+				{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("u1")}, TS: 1},
+				{Role: llm.RoleSystem, Sections: []llm.Section{{Name: "sandbox", Value: "mode: read-only"}}},
+				{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("u2")}, TS: 2},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tr
+	}
+	roles := func(req *wireRequest) []string {
+		var out []string
+		for _, m := range req.Messages {
+			out = append(out, m.Role)
+		}
+		return out
+	}
+
+	// Default: collapsed — one system message whose text carries the delta.
+	req, err := BuildRequest(model(), mk(t), llm.StreamOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(roles(req), ","); got != "system,user,user" {
+		t.Fatalf("collapsed roles = %s", got)
+	}
+	head, _ := req.Messages[0].Content.(string)
+	if !strings.Contains(head, "mode: read-only") {
+		t.Fatalf("collapsed head lost the delta: %q", head)
+	}
+
+	// On: head is the leading prompt alone; the delta rides in place.
+	m := model()
+	m.Caps.MidConvoSystem = true
+	req, err = BuildRequest(m, mk(t), llm.StreamOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(roles(req), ","); got != "system,user,system,user" {
+		t.Fatalf("in-place roles = %s", got)
+	}
+	head, _ = req.Messages[0].Content.(string)
+	if head != "base prompt" {
+		t.Fatalf("head must be the leading prompt alone, got %q", head)
+	}
+	delta, _ := req.Messages[2].Content.(string)
+	if !strings.Contains(delta, "<sandbox>") || !strings.Contains(delta, "mode: read-only") {
+		t.Fatalf("in-place delta malformed: %q", delta)
+	}
+}
+
+// pi parity: ALL historical thinking replays under the dialect key it
+// arrived in (the block's Signature, recorded at stream time);
+// signature-less thinking (legacy/foreign transcripts) never replays.
+func TestReasoningReplayPiParity(t *testing.T) {
+	mk := func(sig string) *llm.Transcript {
+		tr, err := llm.NormalizeContext(llm.Context{
+			SystemPrompt: "sys",
+			Messages: []llm.Message{
+				{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("q")}, TS: 1},
+				{Role: llm.RoleAssistant, TS: 2, Content: []llm.Block{
+					{Kind: llm.BlockThinking, Text: "deep thoughts", Signature: sig},
+					llm.TextBlock("answer"),
+				}},
+				{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("q2")}, TS: 3},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tr
+	}
+
+	// reasoning_content signature → reasoning_content field, any endpoint.
+	req, err := BuildRequest(model(), mk("reasoning_content"), llm.StreamOptions{BaseURL: "https://api.deepseek.com/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, m := range req.Messages {
+		if m.ReasoningContent != nil && *m.ReasoningContent == "deep thoughts" {
+			found = true
+		}
+		if m.Reasoning != nil || m.ReasoningText != nil {
+			t.Fatalf("wrong dialect key used: %+v", m)
+		}
+	}
+	if !found {
+		t.Fatal("reasoning_content-signed thinking not replayed")
+	}
+
+	// reasoning signature → reasoning field.
+	req, err = BuildRequest(model(), mk("reasoning"), llm.StreamOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found = false
+	for _, m := range req.Messages {
+		if m.Reasoning != nil && *m.Reasoning == "deep thoughts" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("reasoning-signed thinking not replayed under reasoning")
+	}
+
+	// No signature (legacy/aborted) → no replay.
+	req, err = BuildRequest(model(), mk(""), llm.StreamOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range req.Messages {
+		if m.hasReasoning() {
+			t.Fatalf("signature-less thinking replayed: %+v", m)
+		}
+	}
+}
+
+// pi's DeepSeek compat: a reasoning-capable model replays every
+// assistant message with reasoning_content present — empty when the
+// turn had no thinking (and the empty field does not rescue an
+// otherwise empty message from being skipped).
+func TestDeepSeekForcedReasoningContent(t *testing.T) {
+	m := model()
+	m.Reasoning = true
+	req, err := BuildRequest(m, testTranscript(t), llm.StreamOptions{BaseURL: "https://api.deepseek.com/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"reasoning_content":""`) {
+		t.Fatalf("deepseek assistant messages must carry empty reasoning_content:\n%s", body)
+	}
+
+	// Non-reasoning model or non-deepseek endpoint: field absent.
+	req, err = BuildRequest(model(), testTranscript(t), llm.StreamOptions{BaseURL: "https://api.deepseek.com/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = json.Marshal(req)
+	if strings.Contains(string(body), "reasoning_content") {
+		t.Fatalf("non-reasoning model must not get the forced field:\n%s", body)
+	}
+}
+
 func TestBuildRequestShape(t *testing.T) {
 	req, err := BuildRequest(model(), testTranscript(t), llm.StreamOptions{})
 	if err != nil {
@@ -237,6 +394,74 @@ func TestStreamAssembly(t *testing.T) {
 	}
 }
 
+func TestStreamEOFWithoutDoneWithFinishReason(t *testing.T) {
+	// Some OpenAI-compatible relays close the connection without the [DONE]
+	// sentinel. A finish_reason already proved generation completed, so this
+	// must be a normal end, not a truncation error.
+	const body = `data: {"choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"choices":[{"index":0,"delta":{"content":"Hi"}}]}
+
+data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		w.Write([]byte(body)) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	p := New("k", srv.URL)
+	events, err := p.Stream(context.Background(), model(), testTranscript(t), llm.StreamOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []llm.Event
+	for ev := range events {
+		got = append(got, ev)
+	}
+	if err := llm.ValidateStream(got); err != nil {
+		t.Fatalf("stream contract: %v", err)
+	}
+	final := got[len(got)-1]
+	if final.Type != llm.EventDone {
+		t.Fatalf("terminal = %+v, want done", final)
+	}
+	if final.Message.StopReason != llm.StopEndTurn {
+		t.Fatalf("stopReason = %s, want %s", final.Message.StopReason, llm.StopEndTurn)
+	}
+	if len(final.Message.Content) != 1 || final.Message.Content[0].Text != "Hi" {
+		t.Fatalf("content = %+v", final.Message.Content)
+	}
+}
+
+func TestStreamEOFWithoutDoneIsTruncation(t *testing.T) {
+	// No [DONE] and no finish_reason: the relay cut the stream mid-generation.
+	const body = `data: {"choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"choices":[{"index":0,"delta":{"content":"partial"}}]}
+
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		w.Write([]byte(body)) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	p := New("k", srv.URL)
+	events, err := p.Stream(context.Background(), model(), testTranscript(t), llm.StreamOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var last llm.Event
+	for ev := range events {
+		last = ev
+	}
+	if last.Type != llm.EventError || !strings.Contains(last.Message.Error, "stream ended before a terminal event") {
+		t.Fatalf("last = %+v", last)
+	}
+}
+
 func TestStreamHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)
@@ -298,7 +523,7 @@ func TestBuildRequestThinkingWire(t *testing.T) {
 
 // Recorded failure turns must replay as text — regression for the
 // session-poisoning bug.
-func TestBuildRequestErrorTurnReplaysAsText(t *testing.T) {
+func TestBuildRequestErrorTurnSkipped(t *testing.T) {
 	tr, err := llm.NormalizeContext(llm.Context{
 		SystemPrompt: "p",
 		Messages: []llm.Message{
@@ -314,9 +539,17 @@ func TestBuildRequestErrorTurnReplaysAsText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// messages[0] is the system prompt here; the error turn is at [2].
-	if req.Messages[2].Content != "[turn failed: quota]" {
-		t.Fatalf("error turn wire shape = %+v", req.Messages[2])
+	// system + user + user: the error turn never reaches the wire.
+	if len(req.Messages) != 3 {
+		t.Fatalf("wire messages = %d, want 3", len(req.Messages))
+	}
+	for _, m := range req.Messages {
+		if m.Role == "assistant" {
+			t.Fatalf("error turn leaked into the request: %+v", m)
+		}
+	}
+	if req.Messages[2].Content != "again" {
+		t.Fatalf("tail = %+v", req.Messages[2])
 	}
 }
 
@@ -326,5 +559,93 @@ func TestClampPromptCacheKey(t *testing.T) {
 	}
 	if got := ClampPromptCacheKey(strings.Repeat("x", 70)); len(got) != 64 {
 		t.Fatalf("len = %d", len(got))
+	}
+}
+
+// Tool-result images follow in a user message only when the model
+// accepts image input (pi's model.input gate); text-only models keep
+// the placeholder text.
+func TestBuildRequestToolResultImageGating(t *testing.T) {
+	img := llm.Block{Kind: llm.BlockImage, MimeType: "image/png", Data: "aGk="}
+	mk := func() *llm.Transcript {
+		tr, err := llm.NormalizeContext(llm.Context{
+			SystemPrompt: "p",
+			Messages: []llm.Message{
+				{Role: llm.RoleUser, Content: []llm.Block{llm.TextBlock("look")}},
+				{Role: llm.RoleAssistant, Content: []llm.Block{
+					{Kind: llm.BlockToolCall, ID: "c1", Name: "read", Arguments: json.RawMessage(`{"path":"x.png"}`)},
+				}},
+				{Role: llm.RoleTool, Content: []llm.Block{
+					{Kind: llm.BlockToolResult, ID: "c1", Content: []llm.Block{img}},
+				}},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tr
+	}
+
+	// Text-only model: no image message, placeholder in the tool result.
+	req, err := BuildRequest(model(), mk(), llm.StreamOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range req.Messages {
+		if m.Role == "user" {
+			if parts, ok := m.Content.([]wireContent); ok {
+				for _, p := range parts {
+					if p.Type == "image_url" {
+						t.Fatal("image forwarded to a text-only model")
+					}
+				}
+			}
+		}
+		if m.Role == "tool" && m.Content != "(see attached image)" {
+			t.Fatalf("tool placeholder = %v", m.Content)
+		}
+	}
+
+	// Vision model: image rides a user message after the tool result.
+	vm := model()
+	vm.Caps.ImageInput = true
+	req, err = BuildRequest(vm, mk(), llm.StreamOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saw bool
+	for _, m := range req.Messages {
+		if m.Role != "user" {
+			continue
+		}
+		if parts, ok := m.Content.([]wireContent); ok {
+			for _, p := range parts {
+				if p.Type == "image_url" && p.ImageURL != nil && p.ImageURL.URL == "data:image/png;base64,aGk=" {
+					saw = true
+				}
+			}
+		}
+	}
+	if !saw {
+		t.Fatal("image missing from the vision-model request")
+	}
+}
+
+// Argument fragments that never form valid JSON are wrapped as a JSON
+// string, never passed through as an invalid json.RawMessage.
+func TestToJSONStringInvalidFragments(t *testing.T) {
+	got := toJSONString(json.RawMessage(`{"command":oops`))
+	if !json.Valid([]byte(got)) {
+		t.Fatalf("toJSONString produced invalid JSON: %q", got)
+	}
+	var s string
+	if err := json.Unmarshal([]byte(got), &s); err != nil || s != `{"command":oops` {
+		t.Fatalf("wrapped = %q err=%v", got, err)
+	}
+	if got := toJSONString(json.RawMessage("{ \"a\" : 1 }")); got != `{"a":1}` {
+		t.Fatalf("valid input should compact: %q", got)
+	}
+	if got := toJSONString(nil); got != `{}` {
+		t.Fatalf("empty input should become {}: %q", got)
 	}
 }

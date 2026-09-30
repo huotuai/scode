@@ -142,3 +142,8 @@ func (FindTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.ToolRe
 	}
 	return agent.TextResult(out)
 }
+
+// PromptContribution is pi's lsToolSystemPromptContribution.
+func (LsTool) PromptContribution() (string, []string) {
+	return "List directory contents", nil
+}

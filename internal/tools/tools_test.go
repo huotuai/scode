@@ -2,14 +2,21 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"scode/internal/agent"
+	"scode/internal/llm"
+	"scode/internal/sandbox"
 )
 
 func TestTruncateHeadAndTail(t *testing.T) {
@@ -75,9 +82,59 @@ func TestReadToolMissing(t *testing.T) {
 	}
 }
 
+// An empty file must not become an image block even when named .png: the
+// empty data URL poisons every later provider request (Kimi rejects it as
+// "unsupported image format: text/plain; charset=utf-8").
+func TestReadToolEmptyImageIsNotAnImageBlock(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "empty.png"), nil, 0o644) //nolint:errcheck
+	res := (ReadTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{"path": "empty.png"}))
+	if res.IsError {
+		t.Fatal(blockText(res))
+	}
+	for _, b := range res.Content {
+		if b.Kind == llm.BlockImage {
+			t.Fatalf("empty .png produced an image block: %+v", b)
+		}
+	}
+}
+
+// Detection is by content, not extension: a text file named .png reads as
+// text, and real image bytes become an image block regardless of name.
+func TestReadToolDetectsImageByContent(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "fake.png"), []byte("just text"), 0o644) //nolint:errcheck
+	res := (ReadTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{"path": "fake.png"}))
+	if res.IsError {
+		t.Fatal(blockText(res))
+	}
+	for _, b := range res.Content {
+		if b.Kind == llm.BlockImage {
+			t.Fatal("text content named .png was treated as an image")
+		}
+	}
+
+	png := append([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, 0, 0, 0, 13)
+	png = append(png, 'I', 'H', 'D', 'R')
+	os.WriteFile(filepath.Join(dir, "real"), png, 0o644) //nolint:errcheck
+	res = (ReadTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{"path": "real"}))
+	if res.IsError {
+		t.Fatal(blockText(res))
+	}
+	found := false
+	for _, b := range res.Content {
+		if b.Kind == llm.BlockImage && b.MimeType == "image/png" && b.Data != "" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("real PNG bytes without an extension were not attached")
+	}
+}
+
 func TestWriteTool(t *testing.T) {
 	dir := t.TempDir()
-	res := (WriteTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{
+	res := (WriteTool{}).Execute(unfencedCtx(dir), mustArgs(t, map[string]any{
 		"path": "sub/dir/f.txt", "content": "hello",
 	}))
 	if res.IsError {
@@ -92,7 +149,7 @@ func TestWriteTool(t *testing.T) {
 func TestWriteToolRefusesDirectory(t *testing.T) {
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, "d"), 0o755) //nolint:errcheck
-	res := (WriteTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{
+	res := (WriteTool{}).Execute(unfencedCtx(dir), mustArgs(t, map[string]any{
 		"path": "d", "content": "x",
 	}))
 	if !res.IsError {
@@ -244,7 +301,7 @@ func TestGrepToolBadPattern(t *testing.T) {
 }
 
 func TestBashTool(t *testing.T) {
-	res := (BashTool{}).Execute(agent.ToolContext{CWD: t.TempDir()}, mustArgs(t, map[string]any{
+	res := (BashTool{}).Execute(unfencedCtx(t.TempDir()), mustArgs(t, map[string]any{
 		"command": "echo hello-bash",
 	}))
 	if res.IsError {
@@ -256,7 +313,7 @@ func TestBashTool(t *testing.T) {
 }
 
 func TestBashToolNonZeroExit(t *testing.T) {
-	res := (BashTool{}).Execute(agent.ToolContext{CWD: t.TempDir()}, mustArgs(t, map[string]any{
+	res := (BashTool{}).Execute(unfencedCtx(t.TempDir()), mustArgs(t, map[string]any{
 		"command": "echo out; echo err >&2; exit 3",
 	}))
 	if res.IsError {
@@ -268,17 +325,234 @@ func TestBashToolNonZeroExit(t *testing.T) {
 	}
 }
 
-func TestBashToolTimeout(t *testing.T) {
-	res := (BashTool{}).Execute(agent.ToolContext{CWD: t.TempDir()}, mustArgs(t, map[string]any{
-		"command": "sleep 5", "timeout": 1,
+func TestBashToolTimeoutDetaches(t *testing.T) {
+	dir := t.TempDir()
+	t.Cleanup(cleanupBackgroundTasks)
+	res := (BashTool{}).Execute(unfencedCtx(dir), mustArgs(t, map[string]any{
+		"command": "sleep 30", "timeout": 0.3,
 	}))
 	if res.IsError {
-		if strings.Contains(blockText(res), "timed out") {
-			return // expected
-		}
 		t.Skipf("no bash on this machine: %s", blockText(res))
 	}
-	t.Fatal("timeout must produce an error result")
+	text := blockText(res)
+	id := taskIDFromText(t, text)
+	if !strings.Contains(text, "still running in the background") {
+		t.Fatalf("timeout result should announce the detached task: %q", text)
+	}
+	if info, ok := GetBackgroundTask(id); !ok || info.State != TaskRunning {
+		t.Fatalf("detached task must be visible and running: ok=%v info=%+v", ok, info)
+	}
+
+	kill := (BashKillTool{}).Execute(unfencedCtx(dir), mustArgs(t, map[string]any{"id": id}))
+	if kill.IsError {
+		t.Fatalf("bash_kill failed: %s", blockText(kill))
+	}
+	if info := waitTaskState(t, id); info.State != TaskKilled {
+		t.Fatalf("state = %s, want killed", info.State)
+	}
+}
+
+func TestBashToolRunInBackground(t *testing.T) {
+	dir := t.TempDir()
+	t.Cleanup(cleanupBackgroundTasks)
+	start := time.Now()
+	res := (BashTool{}).Execute(unfencedCtx(dir), mustArgs(t, map[string]any{
+		"command": "echo bg-ready; sleep 30", "run_in_background": true,
+	}))
+	if res.IsError {
+		t.Skipf("no bash on this machine: %s", blockText(res))
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("run_in_background must return immediately, took %v", elapsed)
+	}
+	id := taskIDFromText(t, blockText(res))
+
+	// The command's early output must show up through bash_status.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		st := blockText((BashStatusTool{}).Execute(unfencedCtx(dir), mustArgs(t, map[string]any{"id": id})))
+		if strings.Contains(st, "bg-ready") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("background output never appeared: %q", st)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err := KillBackgroundTask(id); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+}
+
+func TestBashStatusReportsExitCodeAndOutput(t *testing.T) {
+	dir := t.TempDir()
+	t.Cleanup(cleanupBackgroundTasks)
+	res := (BashTool{}).Execute(unfencedCtx(dir), mustArgs(t, map[string]any{
+		"command": "echo done-marker; exit 7", "run_in_background": true,
+	}))
+	if res.IsError {
+		t.Skipf("no bash on this machine: %s", blockText(res))
+	}
+	id := taskIDFromText(t, blockText(res))
+	if info := waitTaskState(t, id); info.State != TaskExited || info.ExitCode != 7 {
+		t.Fatalf("terminal state = %+v, want exited/7", info)
+	}
+	text := blockText((BashStatusTool{}).Execute(unfencedCtx(dir), mustArgs(t, map[string]any{"id": id})))
+	if !strings.Contains(text, "exit code 7") || !strings.Contains(text, "done-marker") {
+		t.Fatalf("bash_status lost the result: %q", text)
+	}
+}
+
+func TestBashStatusListsTasksWithoutID(t *testing.T) {
+	dir := t.TempDir()
+	t.Cleanup(cleanupBackgroundTasks)
+	tc := unfencedCtx(dir)
+	tc.Env = map[string]string{"SCODE_SESSION_ID": "session-under-test"}
+	res := (BashTool{}).Execute(tc, mustArgs(t, map[string]any{
+		"command": "echo listed; sleep 30", "run_in_background": true,
+	}))
+	if res.IsError {
+		t.Skipf("no bash on this machine: %s", blockText(res))
+	}
+	id := taskIDFromText(t, blockText(res))
+
+	listed := blockText((BashStatusTool{}).Execute(tc, mustArgs(t, map[string]any{})))
+	if !strings.Contains(listed, fmt.Sprintf("#%d", id)) || !strings.Contains(listed, "listed") {
+		t.Fatalf("list lost the task: %q", listed)
+	}
+	// Session filtering: another session must not see it.
+	other := unfencedCtx(dir)
+	other.Env = map[string]string{"SCODE_SESSION_ID": "someone-else"}
+	if otherList := blockText((BashStatusTool{}).Execute(other, mustArgs(t, map[string]any{}))); strings.Contains(otherList, fmt.Sprintf("#%d", id)) {
+		t.Fatalf("another session saw the task: %q", otherList)
+	}
+	if err := KillBackgroundTask(id); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+}
+
+// The timeout/exit race: a short command under a tiny timeout may finish in
+// time or be detached, but it must never lose its result — the single
+// cmd.Wait owner is what makes that structural.
+func TestBashToolTimeoutRaceDoesNotLoseResults(t *testing.T) {
+	dir := t.TempDir()
+	t.Cleanup(cleanupBackgroundTasks)
+	for i := 0; i < 15; i++ {
+		res := (BashTool{}).Execute(unfencedCtx(dir), mustArgs(t, map[string]any{
+			"command": "echo raced", "timeout": 0.01,
+		}))
+		if res.IsError {
+			t.Skipf("no bash on this machine: %s", blockText(res))
+		}
+		text := blockText(res)
+		if !strings.Contains(text, "raced") && !strings.Contains(text, "background task #") {
+			t.Fatalf("run %d produced neither output nor a task handle: %q", i, text)
+		}
+		if strings.Contains(text, "background task #") {
+			waitTaskState(t, taskIDFromText(t, text))
+		}
+	}
+}
+
+func TestBackgroundRegistryConcurrentCap(t *testing.T) {
+	resetBackgroundRegistry()
+	defer resetBackgroundRegistry()
+	mk := func() *backgroundTask {
+		return &backgroundTask{out: newLockedTailBuffer(16), done: make(chan struct{}), startedAt: time.Now()}
+	}
+	for i := 0; i < maxConcurrentBackgroundTasks; i++ {
+		if err := registerBackgroundTask(mk()); err != nil {
+			t.Fatalf("register %d: %v", i, err)
+		}
+	}
+	if err := registerBackgroundTask(mk()); err == nil {
+		t.Fatal("the concurrent cap must refuse another live task")
+	}
+}
+
+func TestBashStatusDurationFreezesOnExit(t *testing.T) {
+	dir := t.TempDir()
+	t.Cleanup(cleanupBackgroundTasks)
+	res := (BashTool{}).Execute(unfencedCtx(dir), mustArgs(t, map[string]any{
+		"command": "echo done", "run_in_background": true,
+	}))
+	if res.IsError {
+		t.Skipf("no bash on this machine: %s", blockText(res))
+	}
+	id := taskIDFromText(t, blockText(res))
+	first := waitTaskState(t, id)
+
+	// A finished task's clock must stop: polling again later must not grow
+	// the duration the UI shows.
+	time.Sleep(200 * time.Millisecond)
+	second, ok := GetBackgroundTask(id)
+	if !ok {
+		t.Fatalf("task #%d vanished", id)
+	}
+	if second.State != first.State || second.DurationMs != first.DurationMs {
+		t.Fatalf("duration kept ticking after exit: first=%+v second=%+v", first, second)
+	}
+}
+
+// taskIDFromText pulls the registry id out of a bash result or status line.
+func taskIDFromText(t *testing.T, text string) int {
+	t.Helper()
+	m := regexp.MustCompile(`background task #(\d+)`).FindStringSubmatch(text)
+	if m == nil {
+		t.Fatalf("no background task id in %q", text)
+	}
+	id, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatalf("bad task id in %q: %v", text, err)
+	}
+	return id
+}
+
+// waitTaskState blocks until a task is no longer running.
+func waitTaskState(t *testing.T, id int) TaskInfo {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		info, ok := GetBackgroundTask(id)
+		if !ok {
+			t.Fatalf("task #%d vanished from the registry", id)
+		}
+		if info.State != TaskRunning {
+			return info
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task #%d stayed running: %+v", id, info)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// cleanupBackgroundTasks kills live tasks and waits for them to die, so a
+// test's TempDir (the command's cwd) is not held open at RemoveAll time.
+func cleanupBackgroundTasks() {
+	KillAllBackgroundTasks()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		running := false
+		for _, info := range ListBackgroundTasks("") {
+			if info.State == TaskRunning {
+				running = true
+				break
+			}
+		}
+		if !running {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func resetBackgroundRegistry() {
+	bgRegistry.mu.Lock()
+	bgRegistry.tasks = map[int]*backgroundTask{}
+	bgRegistry.order = nil
+	bgRegistry.next = 0
+	bgRegistry.mu.Unlock()
 }
 
 func TestBashToolEnv(t *testing.T) {
@@ -319,7 +593,7 @@ func TestBashToolCancel(t *testing.T) {
 		time.Sleep(300 * time.Millisecond)
 		cancel()
 	}()
-	res := (BashTool{}).Execute(agent.ToolContext{CWD: t.TempDir(), Ctx: ctx}, mustArgs(t, map[string]any{
+	res := (BashTool{}).Execute(unfencedCtxWithCtx(t.TempDir(), ctx), mustArgs(t, map[string]any{
 		"command": "sleep 30",
 	}))
 	if res.IsError {
@@ -366,5 +640,410 @@ func TestResolve(t *testing.T) {
 	abs := filepath.Join(t.TempDir(), "f.txt")
 	if p := Resolve(agent.ToolContext{CWD: t.TempDir()}, abs); p != abs {
 		t.Fatalf("absolute resolve = %q, want %q", p, abs)
+	}
+}
+
+// The sandbox fence on file mutations: workspace-write confines writes to
+// the workspace/temp roots; read-only denies all; reads stay unfenced.
+func TestSandboxFence(t *testing.T) {
+	dir := t.TempDir()
+	pol := &agent.SandboxPolicy{Mode: "workspace-write", WorkspaceRoot: dir}
+
+	// Inside the workspace: allowed.
+	res := (WriteTool{}).Execute(agent.ToolContext{CWD: dir, Sandbox: pol}, mustArgs(t, map[string]any{
+		"path": "ok.txt", "content": "x",
+	}))
+	if res.IsError {
+		t.Fatalf("inside write denied: %v", res.Content)
+	}
+
+	// Outside: denied with the model-facing markers.
+	res = (WriteTool{}).Execute(agent.ToolContext{CWD: dir, Sandbox: pol}, mustArgs(t, map[string]any{
+		"path": filepath.Join(os.TempDir(), "..", "scode-fence-test.txt"), "content": "x",
+	}))
+	if !res.IsError {
+		t.Fatal("outside write should be denied")
+	}
+	text := res.Content[0].Text
+	if !strings.Contains(text, "[sandbox: file access denied under workspace-write mode]") ||
+		!strings.Contains(text, "[sandbox: escalation available") {
+		t.Fatalf("markers missing: %s", text)
+	}
+
+	// read-only denies even inside the workspace.
+	pol.Mode = "read-only"
+	res = (WriteTool{}).Execute(agent.ToolContext{CWD: dir, Sandbox: pol}, mustArgs(t, map[string]any{
+		"path": "nope.txt", "content": "x",
+	}))
+	if !res.IsError || !strings.Contains(res.Content[0].Text, "read-only") {
+		t.Fatalf("read-only: %v", res.Content)
+	}
+
+	// Reads are never fenced (dsh: every mode permits reading).
+	res = (ReadTool{}).Execute(agent.ToolContext{CWD: dir, Sandbox: pol}, mustArgs(t, map[string]any{
+		"path": "ok.txt",
+	}))
+	if res.IsError {
+		t.Fatalf("read fenced: %v", res.Content)
+	}
+
+	// bash under a confined mode: on platforms WITH a runner backend
+	// (Windows ACL) the command runs confined; elsewhere it fails CLOSED.
+	res = (BashTool{}).Execute(agent.ToolContext{CWD: dir, Sandbox: pol}, mustArgs(t, map[string]any{
+		"command": "echo hi",
+	}))
+	if runtime.GOOS == "windows" {
+		if res.IsError {
+			t.Fatalf("confined bash should run: %v", res.Content)
+		}
+	} else if !res.IsError || !strings.Contains(res.Content[0].Text, "SANDBOX_UNAVAILABLE") {
+		t.Fatalf("bash should fail closed without a backend: %v", res.Content)
+	}
+
+	// danger-full-access: unfenced.
+	pol.Mode = "danger-full-access"
+	res = (BashTool{}).Execute(agent.ToolContext{CWD: dir, Sandbox: pol}, mustArgs(t, map[string]any{
+		"command": "echo hi",
+	}))
+	if res.IsError {
+		t.Fatalf("danger mode bash: %v", res.Content)
+	}
+}
+
+// Sandbox escalation choreography: a confined write that asks for a wider
+// mode is judged, approved through the escalation channel, and runs at the
+// wider mode for that call only. Rejection and missing pairing fail closed.
+func TestSandboxEscalationFlow(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(os.TempDir(), "..", "scode-esc-test.txt")
+	defer os.Remove(outside) //nolint:errcheck
+	pol := &agent.SandboxPolicy{Mode: "workspace-write", WorkspaceRoot: dir}
+
+	approved := false
+	tc := agent.ToolContext{
+		CWD:     dir,
+		Sandbox: pol,
+		Escalate: func(requestedMode, justification, detail string) agent.EscalationResult {
+			approved = true
+			if requestedMode != "danger-full-access" || justification == "" || detail == "" {
+				t.Errorf("escalation request = %q %q %q", requestedMode, justification, detail)
+			}
+			return agent.EscalationResult{Approved: true}
+		},
+	}
+
+	// Escalated write outside the boundary: approved → succeeds.
+	res := (WriteTool{}).Execute(tc, mustArgs(t, map[string]any{
+		"path": outside, "content": "x",
+		"sandbox_permissions": "danger-full-access",
+		"justification":       "需要写全局日志",
+	}))
+	if res.IsError || !approved {
+		t.Fatalf("escalated write: approved=%v res=%v", approved, res.Content)
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Fatal("escalated write did not land")
+	}
+	os.Remove(outside) //nolint:errcheck
+
+	// Same call WITHOUT escalation still denied.
+	res = (WriteTool{}).Execute(tc, mustArgs(t, map[string]any{
+		"path": outside, "content": "x",
+	}))
+	if !res.IsError || !strings.Contains(res.Content[0].Text, "[sandbox:") {
+		t.Fatalf("unescalated: %v", res.Content)
+	}
+
+	// Rejected escalation: nothing runs.
+	tc.Escalate = func(string, string, string) agent.EscalationResult {
+		return agent.EscalationResult{Reason: "no"}
+	}
+	res = (WriteTool{}).Execute(tc, mustArgs(t, map[string]any{
+		"path": outside, "content": "x",
+		"sandbox_permissions": "danger-full-access",
+		"justification":       "再试一次",
+	}))
+	if !res.IsError || !strings.Contains(res.Content[0].Text, "rejected") {
+		t.Fatalf("rejected: %v", res.Content)
+	}
+
+	// Pairing violation: permissions without justification.
+	res = (WriteTool{}).Execute(tc, mustArgs(t, map[string]any{
+		"path": outside, "content": "x", "sandbox_permissions": "danger-full-access",
+	}))
+	if !res.IsError || !strings.Contains(res.Content[0].Text, "justification") {
+		t.Fatalf("pairing: %v", res.Content)
+	}
+
+	// Narrowing request errors without asking.
+	asked := false
+	tc.Escalate = func(string, string, string) agent.EscalationResult {
+		asked = true
+		return agent.EscalationResult{Approved: true}
+	}
+	res = (WriteTool{}).Execute(tc, mustArgs(t, map[string]any{
+		"path": outside, "content": "x",
+		"sandbox_permissions": "read-only", "justification": "收窄",
+	}))
+	if !res.IsError || asked {
+		t.Fatalf("narrowing: asked=%v res=%v", asked, res.Content)
+	}
+}
+
+// A directory link inside the workspace (unix symlink, Windows junction)
+// must not let the file tools write outside it. The fence resolves the
+// deepest existing ancestor, so the linked ancestor is seen as itself. The
+// direct write to the same outside location is asserted first: it proves the
+// decoy is genuinely outside every writable root.
+func TestWriteRejectsLinkedAncestorEscape(t *testing.T) {
+	ws := t.TempDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home directory for the decoy: %v", err)
+	}
+	outside := filepath.Join(home, fmt.Sprintf("scode-tools-link-%d", os.Getpid()))
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Skipf("cannot create the decoy: %v", err)
+	}
+	defer os.RemoveAll(outside) //nolint:errcheck
+
+	pol := &agent.SandboxPolicy{Mode: "workspace-write", WorkspaceRoot: ws}
+	tc := agent.ToolContext{CWD: ws, Sandbox: pol}
+
+	// Precondition: the decoy is outside the boundary.
+	res := (WriteTool{}).Execute(tc, mustArgs(t, map[string]any{
+		"path": filepath.Join(outside, "direct.txt"), "content": "x",
+	}))
+	if !res.IsError {
+		t.Skipf("decoy %s is writable, so it is inside a writable root", outside)
+	}
+
+	link := filepath.Join(ws, "link")
+	if err := os.Symlink(outside, link); err != nil {
+		// Windows: a junction needs no privilege and is the realistic
+		// vector (and the one Go's EvalSymlinks cannot see).
+		if out, jerr := exec.Command("cmd", "/c", "mklink", "/J", link, outside).CombinedOutput(); jerr != nil {
+			t.Skipf("no directory-link primitive: symlink=%v junction=%v %s", err, jerr, out)
+		}
+	}
+	defer os.Remove(link) //nolint:errcheck // remove the link, never its target
+
+	for _, name := range []string{"evil.txt", filepath.Join("sub", "evil.txt")} {
+		res = (WriteTool{}).Execute(tc, mustArgs(t, map[string]any{
+			"path": filepath.Join(link, name), "content": "pwned",
+		}))
+		if !res.IsError {
+			t.Fatalf("linked-ancestor escape allowed for %s: %v", name, res.Content)
+		}
+		if !strings.Contains(res.Content[0].Text, "[sandbox:") {
+			t.Fatalf("expected the denial marker for %s, got: %s", name, res.Content[0].Text)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(outside, "evil.txt")); err == nil {
+		t.Fatal("a file landed outside the workspace")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "sub", "evil.txt")); err == nil {
+		t.Fatal("a nested file landed outside the workspace")
+	}
+}
+
+// unfencedCtx is the explicit unrestricted policy the mutation-tool tests
+// opt into: a ToolContext with no composed policy is now fail-closed, so
+// tests that exercise unrelated behavior must state the mode they assume.
+func unfencedCtx(dir string) agent.ToolContext {
+	return agent.ToolContext{
+		CWD:     dir,
+		Sandbox: &agent.SandboxPolicy{Mode: string(sandbox.ModeDangerFullAccess), WorkspaceRoot: dir},
+	}
+}
+
+func unfencedCtxWithCtx(dir string, ctx context.Context) agent.ToolContext {
+	tc := unfencedCtx(dir)
+	tc.Ctx = ctx
+	return tc
+}
+
+// Fail-closed contract: a mutation tool with no composed sandbox policy, or
+// with an unresolved mode string, must refuse and leave the filesystem
+// untouched — absence of a policy is never permission.
+func TestMutationToolsFailClosedWithoutPolicy(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "out.txt")
+
+	cases := []struct {
+		name string
+		tc   agent.ToolContext
+	}{
+		{"no policy", agent.ToolContext{CWD: dir}},
+		{"empty mode", agent.ToolContext{CWD: dir, Sandbox: &agent.SandboxPolicy{WorkspaceRoot: dir}}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res := (WriteTool{}).Execute(c.tc, mustArgs(t, map[string]any{"path": target, "content": "x"}))
+			if !res.IsError || !strings.Contains(res.Content[0].Text, "fail-closed") {
+				t.Fatalf("write must fail closed: %v", res.Content)
+			}
+			res = (EditTool{}).Execute(c.tc, mustArgs(t, map[string]any{
+				"path": target, "edits": []map[string]string{{"oldText": "a", "newText": "b"}},
+			}))
+			if !res.IsError || !strings.Contains(res.Content[0].Text, "fail-closed") {
+				t.Fatalf("edit must fail closed: %v", res.Content)
+			}
+			res = (BashTool{}).Execute(c.tc, mustArgs(t, map[string]any{"command": "echo hi"}))
+			if !res.IsError || !strings.Contains(res.Content[0].Text, "fail-closed") {
+				t.Fatalf("bash must fail closed: %v", res.Content)
+			}
+			if _, err := os.Stat(target); err == nil {
+				t.Fatal("a refused call touched the filesystem")
+			}
+		})
+	}
+}
+
+// The approval prompt's detail must be an absolute path (so the human can
+// verify what is being widened) and a bounded single line (so a model cannot
+// forge layout or bury the payload). bash passes the raw command; write/edit
+// must absolutize it before the summarizer sees it.
+func TestEscalationDetailIsAbsoluteAndBounded(t *testing.T) {
+	dir := t.TempDir()
+	pol := &agent.SandboxPolicy{Mode: "workspace-write", WorkspaceRoot: dir}
+
+	var got []string
+	tc := agent.ToolContext{
+		CWD:     dir,
+		Sandbox: pol,
+		Escalate: func(requestedMode, justification, detail string) agent.EscalationResult {
+			got = append(got, detail)
+			return agent.EscalationResult{Approved: false, Reason: "test"}
+		},
+	}
+
+	// Relative path must arrive absolute.
+	(WriteTool{}).Execute(tc, mustArgs(t, map[string]any{
+		"path": "sub/rel.txt", "content": "x",
+		"sandbox_permissions": "danger-full-access", "justification": "需要写外部目录",
+	}))
+	if len(got) != 1 {
+		t.Fatalf("escalations = %d", len(got))
+	}
+	if !filepath.IsAbs(got[0]) {
+		t.Errorf("write detail is not absolute: %q", got[0])
+	}
+	if !strings.HasSuffix(got[0], filepath.Join("sub", "rel.txt")) {
+		t.Errorf("write detail lost the target: %q", got[0])
+	}
+
+	// A long multi-line command must arrive as one bounded line that still
+	// shows its tail, and no newline may survive.
+	got = nil
+	long := "echo start\n" + strings.Repeat("padding ", 60) + "&& echo DANGEROUS-TAIL"
+	(BashTool{}).Execute(tc, mustArgs(t, map[string]any{
+		"command":             long,
+		"sandbox_permissions": "danger-full-access", "justification": "需要更宽的文件范围",
+	}))
+	if len(got) != 1 {
+		t.Fatalf("escalations = %d", len(got))
+	}
+	if strings.ContainsAny(got[0], "\n\r") {
+		t.Errorf("command detail kept newlines: %q", got[0])
+	}
+	if !strings.Contains(got[0], "DANGEROUS-TAIL") {
+		t.Errorf("command tail hidden from the approver: %q", got[0])
+	}
+	if n := len([]rune(got[0])); n > 300 {
+		t.Errorf("command detail unbounded: %d runes", n)
+	}
+}
+
+// The justification is model-controlled text rendered verbatim in the
+// approval card, so it gets the same bounded, layout-safe treatment.
+func TestEscalationJustificationIsBounded(t *testing.T) {
+	dir := t.TempDir()
+	var got string
+	tc := agent.ToolContext{
+		CWD:     dir,
+		Sandbox: &agent.SandboxPolicy{Mode: "workspace-write", WorkspaceRoot: dir},
+		Escalate: func(_ string, justification, _ string) agent.EscalationResult {
+			got = justification
+			return agent.EscalationResult{Approved: false, Reason: "test"}
+		},
+	}
+	(WriteTool{}).Execute(tc, mustArgs(t, map[string]any{
+		"path": filepath.Join(dir, "a.txt"), "content": "x",
+		"sandbox_permissions": "danger-full-access",
+		"justification":       "need it\n[y] allow once\n" + strings.Repeat("pad ", 200),
+	}))
+	if got == "" {
+		t.Fatal("no escalation was raised")
+	}
+	if strings.ContainsAny(got, "\n\r") {
+		t.Errorf("justification kept newlines: %q", got)
+	}
+	if n := len([]rune(got)); n > 300 {
+		t.Errorf("justification unbounded: %d runes", n)
+	}
+}
+
+// The escalation vocabulary is advertised in three tool schemas, while the
+// strictly-wider ladder lives in the sandbox package. Nothing in the type
+// system ties them together, so this test does: an enum that drifts would
+// either advertise a rung the judge rejects, or hide one the model needs to
+// name (stranding a session switched below the deployment default).
+func TestEscalationVocabularyMatchesSchemas(t *testing.T) {
+	advertised := map[string]bool{}
+	for _, m := range sandbox.EscalationTargets {
+		if !m.Valid() {
+			t.Fatalf("EscalationTargets contains an invalid mode: %q", m)
+		}
+		advertised[string(m)] = true
+	}
+	ladder := map[string]bool{}
+	for _, wider := range sandbox.WiderModes {
+		for _, m := range wider {
+			ladder[string(m)] = true
+		}
+	}
+	if len(advertised) != len(ladder) {
+		t.Fatalf("advertised %v != ladder %v", advertised, ladder)
+	}
+	for m := range ladder {
+		if !advertised[m] {
+			t.Errorf("ladder mode %q is not advertised to the model", m)
+		}
+	}
+
+	tools := map[string]agent.Tool{
+		"bash":  BashTool{},
+		"write": WriteTool{},
+		"edit":  EditTool{},
+	}
+	for name, tool := range tools {
+		var schema struct {
+			Properties map[string]struct {
+				Type string   `json:"type"`
+				Enum []string `json:"enum"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal(tool.Decl().Parameters, &schema); err != nil {
+			t.Fatalf("%s schema is not valid JSON: %v", name, err)
+		}
+		perm, ok := schema.Properties["sandbox_permissions"]
+		if !ok {
+			t.Fatalf("%s schema does not advertise sandbox_permissions", name)
+		}
+		if perm.Type != "string" {
+			t.Errorf("%s sandbox_permissions type = %q", name, perm.Type)
+		}
+		if len(perm.Enum) != len(advertised) {
+			t.Errorf("%s enum = %v, want %v", name, perm.Enum, sandbox.EscalationTargets)
+		}
+		for _, e := range perm.Enum {
+			if !advertised[e] {
+				t.Errorf("%s advertises %q, which is not an escalation target", name, e)
+			}
+		}
+		if j, ok := schema.Properties["justification"]; !ok || j.Type != "string" {
+			t.Errorf("%s must advertise the paired justification field", name)
+		}
 	}
 }

@@ -99,6 +99,26 @@ func ToolCallBlock(id, name string) Block {
 	return Block{Kind: BlockToolCall, ID: id, Name: name}
 }
 
+// UnmarshalJSON accepts the kind discriminator under either "kind"
+// (scode's storage format) or "type" (pi-written session files), so
+// sessions written by pi load with their block kinds intact instead of
+// degrading every block to an empty Kind.
+func (b *Block) UnmarshalJSON(data []byte) error {
+	type blockAlias Block // bare alias: sheds this method, no recursion
+	var v struct {
+		blockAlias
+		Type BlockKind `json:"type"`
+	}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	*b = Block(v.blockAlias)
+	if b.Kind == "" && v.Type != "" {
+		b.Kind = v.Type
+	}
+	return nil
+}
+
 // Section is one named slice of the system prompt (pi's section model).
 // Replaying a transcript, a later Section with the same Name replaces an
 // earlier one; Delete removes it. Sections live only on system messages.

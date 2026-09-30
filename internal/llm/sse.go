@@ -62,7 +62,11 @@ func ReadSSE(r io.Reader, fn func(SSEEvent) error) error {
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return fmt.Errorf("sse: %w", err)
+		// The body died mid-stream (unexpected EOF, reset, ...): carry
+		// pi's truncation wording so the agent retry whitelist (pi's
+		// retry.ts patterns) recognizes transport drops; the Go cause
+		// rides along for surfacing.
+		return fmt.Errorf("stream ended before a terminal event: sse: %w", err)
 	}
 	// A final event without a trailing blank line still dispatches.
 	return flush()

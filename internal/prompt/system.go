@@ -1,25 +1,18 @@
 // Package prompt assembles scode's system prompt from stable sections
-// (pi's system-prompt.ts design). Cache rule: no dates, no git status,
-// no model names inside the prompt — volatile facts reach the model via
-// shell tool environment variables (SCODE_MODEL & co).
+// (pi's buildSystemPromptSections). Cache rule: no dates, no git
+// status, no model names inside the prompt — volatile facts reach the
+// model via shell tool environment variables (SCODE_*).
 package prompt
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
+	"scode/internal/agent"
 	"scode/internal/llm"
+	"scode/internal/skills"
 )
-
-// Section is one named prompt slice; sections replay deterministically
-// through the transcript model.
-type Section struct {
-	Name  string
-	Value string
-}
 
 // Instruction file candidates per directory, first existing wins
 // (pi's resource-loader order).
@@ -76,14 +69,35 @@ func fileReadable(p string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// Build assembles the system prompt message: base preamble plus named
-// sections (rules, cwd, project_context) in a fixed order.
-func Build(configDir, cwd string, extra []Section) llm.Message {
-	sections := []Section{
-		{Name: "rules", Value: rulesText},
-		{Name: "cwd", Value: formatCWD(cwd)},
-	}
+// preamble is pi's default preamble, branded for scode.
+const preamble = `You are an expert coding assistant operating inside scode, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.`
 
+// Build assembles the system prompt message (pi's
+// buildSystemPromptSections): preamble, then tagged sections tools,
+// rules, project_context, skills, cwd — in pi's fixed order.
+func Build(configDir, cwd string, contribs []agent.ToolContribution, skillList []skills.Skill) llm.Message {
+	sections := []llm.Section{}
+
+	// tools: the visible tool list with one-line snippets (pi).
+	var tb strings.Builder
+	for _, c := range contribs {
+		if c.Snippet == "" {
+			continue
+		}
+		tb.WriteString("- " + c.Name + ": " + c.Snippet + "\n")
+	}
+	tools := strings.TrimRight(tb.String(), "\n")
+	if tools == "" {
+		tools = "(none)"
+	}
+	tools += "\n\nIn addition to the tools above, you may have access to other custom tools depending on the project."
+	sections = append(sections, llm.Section{Name: "tools", Value: tools})
+
+	// rules: deduped per-tool guidelines plus pi's trailing rules
+	// (the bash-file-ops rule is skipped: scode always has grep/find/ls).
+	sections = append(sections, llm.Section{Name: "rules", Value: buildRules(contribs)})
+
+	// project_context: instruction files (pi's renderProjectContext).
 	var ctxParts []string
 	for _, p := range FindInstructions(configDir, cwd) {
 		data, err := os.ReadFile(p)
@@ -95,43 +109,57 @@ func Build(configDir, cwd string, extra []Section) llm.Message {
 		if relErr == nil && !strings.HasPrefix(rel, "..") {
 			display = rel
 		}
-		ctxParts = append(ctxParts, fmt.Sprintf("<project_instructions path=%q>\n%s\n</project_instructions>", display, strings.TrimSpace(string(data))))
+		ctxParts = append(ctxParts, "<project_instructions path=\""+display+"\">\n"+strings.TrimSpace(string(data))+"\n</project_instructions>")
 	}
 	if len(ctxParts) > 0 {
-		sections = append(sections, Section{Name: "project_context", Value: strings.Join(ctxParts, "\n\n")})
+		value := "Project-specific instructions and guidelines:\n\n" + strings.Join(ctxParts, "\n\n")
+		sections = append(sections, llm.Section{Name: "project_context", Value: value})
 	}
 
-	sections = append(sections, extra...)
+	// skills: the <available_skills> listing (pi's formatSkillsForPrompt,
+	// trimmed before sectioning). scode always has the read tool, so the
+	// listing is emitted whenever skills are visible.
+	if sp := strings.TrimSpace(skills.FormatForPrompt(skillList)); sp != "" {
+		sections = append(sections, llm.Section{Name: "skills", Value: sp})
+	}
+
+	sections = append(sections, llm.Section{Name: "cwd", Value: filepath.ToSlash(filepath.Clean(cwd))})
 
 	m := llm.Message{
-		Role:    llm.RoleSystem,
-		Content: []llm.Block{llm.TextBlock(preamble)},
-	}
-	for _, s := range sections {
-		if strings.TrimSpace(s.Value) == "" {
-			continue
-		}
-		m.Sections = append(m.Sections, llm.Section{Name: s.Name, Value: s.Value})
+		Role:     llm.RoleSystem,
+		Content:  []llm.Block{llm.TextBlock(preamble)},
+		Sections: sections,
 	}
 	return m
 }
 
-const preamble = `You are scode, an expert coding assistant operating in a terminal. You help with software engineering tasks: reading and editing code, running commands, and answering questions about the codebase. Be concise and precise. State what you did and what remains. When a task needs a decision you cannot make, ask.`
+// buildRules is pi's buildRules: dedup in order, per-tool guidelines,
+// then the fixed trailing rules.
+func buildRules(contribs []agent.ToolContribution) string {
+	var rules []string
+	seen := map[string]bool{}
+	add := func(rule string) {
+		rule = strings.TrimSpace(rule)
+		if rule == "" || seen[rule] {
+			return
+		}
+		seen[rule] = true
+		rules = append(rules, rule)
+	}
 
-const rulesText = `- Use the read tool before editing files you have not seen this session.
-- Prefer edit over write for existing files; write only for new files or full rewrites.
-- Run commands through the bash tool; check exit codes and output before claiming success.
-- Keep tool outputs in mind: grep and find before searching by hand.
-- When a tool call fails, read the error and self-correct instead of repeating the same call.`
+	// pi adds "Use bash for file operations" only when grep/find/ls are
+	// absent — scode always ships them, so that rule never applies.
+	for _, c := range contribs {
+		for _, g := range c.Guidelines {
+			add(g)
+		}
+	}
+	add("Be concise in your responses")
+	add("Show file paths clearly when working with files")
 
-func formatCWD(cwd string) string {
-	// Forward slashes keep prompts stable across platforms.
-	return filepath.ToSlash(filepath.Clean(cwd))
-}
-
-// SortStableSections orders extra sections by name for determinism.
-func SortStableSections(secs []Section) []Section {
-	out := append([]Section(nil), secs...)
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
+	var b strings.Builder
+	for _, r := range rules {
+		b.WriteString("- " + r + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
 }

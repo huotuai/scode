@@ -37,10 +37,11 @@ func TestResolveCompactTokens(t *testing.T) {
 	}
 }
 
-// Resume reconciles a changed AGENTS.md via ONE delta system message:
-// the stored leading declaration is untouched and the projection picks
-// up the new project_context value.
-func TestResumeReconcilesPrompt(t *testing.T) {
+// Resume rebuilds the prompt from the CURRENT build: an AGENTS.md
+// edited between runs applies with no delta system messages and no
+// writes to the session file (pi's boundary — the prompt is never
+// stored, so there is nothing to reconcile).
+func TestResumeRebuildsPrompt(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		chatSSE(w, "ok", 100)
 	}))
@@ -96,31 +97,11 @@ func TestResumeReconcilesPrompt(t *testing.T) {
 	if !found {
 		t.Fatal("resumed prompt did not pick up the AGENTS.md edit")
 	}
-	// Exactly one delta system message was appended, and the leading
-	// declaration is unchanged.
-	deltas := 0
+	// The session file carries NO system messages: the conversation is
+	// all that is stored.
 	for _, e := range app2.entries {
 		if e.Msg != nil && e.Msg.Role == llm.RoleSystem {
-			deltas++
+			t.Fatalf("system message leaked into storage: %+v", e.Msg)
 		}
-	}
-	if deltas != 2 { // leading + one patch
-		t.Fatalf("system messages = %d, want 2 (leading + one delta)", deltas)
-	}
-
-	// And a THIRD resume with no further drift appends nothing new.
-	app3, err := Setup(Options{Resume: id})
-	if err != nil {
-		t.Fatal(err)
-	}
-	app3.Close() //nolint:errcheck
-	deltas = 0
-	for _, e := range app3.entries {
-		if e.Msg != nil && e.Msg.Role == llm.RoleSystem {
-			deltas++
-		}
-	}
-	if deltas != 2 {
-		t.Fatalf("no-drift resume appended extra deltas: %d", deltas)
 	}
 }

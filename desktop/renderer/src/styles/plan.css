@@ -1,0 +1,147 @@
+/* Plan-progress panel: the session's update_plan checklist, persisted
+   server-side and polled like the background-task panel. Anchored under
+   the TopBar so progress stays one click away. */
+
+.plan-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.plan-btn:hover { background: var(--surface-3); color: var(--text); }
+.plan-btn.active { color: var(--accent); border-color: var(--accent-soft-2); background: var(--accent-soft); }
+.plan-btn .plan-badge {
+  position: absolute;
+  top: -5px;
+  right: -8px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--warning);
+  color: #fff;
+  font-size: calc(var(--ui-font-size) - 4px);
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.plan-btn .plan-badge.done { background: var(--success); }
+
+.plan-panel {
+  position: absolute;
+  top: 52px;
+  right: 12px;
+  z-index: 20;
+  width: min(440px, calc(100% - 24px));
+  max-height: min(60vh, 560px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.plan-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+.plan-panel-title { font-size: calc(var(--ui-font-size) - 1px); font-weight: 600; color: var(--text); }
+.plan-count {
+  font-size: calc(var(--ui-font-size) - 3px);
+  font-weight: 600;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-variant-numeric: tabular-nums;
+}
+.plan-count.done { color: var(--success); background: var(--success-soft); }
+.plan-panel-head .spacer { flex: 1; }
+.plan-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.plan-icon-btn:hover { background: var(--surface-3); color: var(--text); }
+
+.plan-meter {
+  height: 4px;
+  background: var(--surface-3);
+  flex-shrink: 0;
+}
+.plan-meter-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
+.plan-error {
+  padding: 8px 12px;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-bottom: 1px solid var(--danger-border);
+}
+.plan-empty {
+  padding: 20px 14px;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--text-3);
+  text-align: center;
+}
+
+.plan-explanation {
+  padding: 8px 12px 0;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--text-2);
+}
+
+.plan-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+}
+.plan-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  font-size: calc(var(--ui-font-size) - 1.5px);
+}
+.plan-item + .plan-item { margin-top: 2px; }
+.plan-item:hover { background: var(--surface-2); }
+.plan-item .plan-state { display: inline-flex; flex-shrink: 0; }
+.plan-item.completed .plan-state { color: var(--success); }
+.plan-item.in_progress .plan-state { color: var(--accent); }
+.plan-item.pending .plan-state { color: var(--text-3); }
+.plan-item.completed .plan-step { color: var(--text-3); text-decoration: line-through; }
+.plan-item.in_progress .plan-step { color: var(--text); font-weight: 600; }
+.plan-item.pending .plan-step { color: var(--text-2); }
+.plan-step { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.plan-state-label { font-size: calc(var(--ui-font-size) - 3px); color: var(--text-3); flex-shrink: 0; }

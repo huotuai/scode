@@ -55,7 +55,13 @@ type wireMessage struct {
 	Content    any            `json:"content,omitempty"`
 	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
-	Reasoning  string         `json:"reasoning_content,omitempty"` // replay of thinking (DeepSeek/GLM convention)
+	// Thinking replay rides back under the dialect key it arrived in
+	// (pi's signature-driven replay; the block's Signature records the
+	// key at stream time). Pointers so a forced EMPTY reasoning_content
+	// (pi's DeepSeek compat) survives marshaling.
+	ReasoningContent *string `json:"reasoning_content,omitempty"`
+	Reasoning        *string `json:"reasoning,omitempty"`
+	ReasoningText    *string `json:"reasoning_text,omitempty"`
 }
 
 type wireTool struct {
@@ -130,6 +136,49 @@ func applyThinkingWire(req *wireRequest, baseURL, level string) {
 	}
 }
 
+// reasoningReplayFields are the dialect keys thinking may replay under
+// (pi's OPENAI_COMPLETIONS_REASONING_FIELDS).
+var reasoningReplayFields = []string{"reasoning", "reasoning_content", "reasoning_text"}
+
+// isReasoningReplayField reports whether a thinking block's Signature
+// names a replayable reasoning field (pi's
+// isOpenAICompletionsReasoningField). Anything else — an Anthropic
+// signature, a Responses stored item, an empty signature from an
+// aborted/legacy stream — is not a field name and never replays here.
+func isReasoningReplayField(signature string) bool {
+	for _, f := range reasoningReplayFields {
+		if signature == f {
+			return true
+		}
+	}
+	return false
+}
+
+// setReasoning replays joined thinking under the given dialect key.
+func (m *wireMessage) setReasoning(field, text string) {
+	switch field {
+	case "reasoning_content":
+		m.ReasoningContent = &text
+	case "reasoning":
+		m.Reasoning = &text
+	case "reasoning_text":
+		m.ReasoningText = &text
+	}
+}
+
+// hasReasoning reports whether any replay field is set (a forced empty
+// DeepSeek field counts — the skip-empty check has its own rule).
+func (m *wireMessage) hasReasoning() bool {
+	return m.ReasoningContent != nil || m.Reasoning != nil || m.ReasoningText != nil
+}
+
+// isDeepSeekURL mirrors pi's isDeepSeek detection (their current
+// thinking-mode API requires reasoning_content on replayed assistant
+// messages; see BuildRequest).
+func isDeepSeekURL(baseURL string) bool {
+	return strings.Contains(strings.ToLower(baseURL), "deepseek.com")
+}
+
 // ClampPromptCacheKey truncates the cache routing key to the protocol's
 // 64-character limit (pi's clampOpenAIPromptCacheKey).
 func ClampPromptCacheKey(key string) string {
@@ -147,10 +196,22 @@ func ClampPromptCacheKey(key string) string {
 // PromptCacheKey additionally routes requests of one session to the same
 // cache shard.
 func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*wireRequest, error) {
-	msgs := t.Messages()
+	// The request-time transform drops errored/aborted turns and
+	// answers orphaned tool calls in place (pi's transform-messages).
+	msgs := llm.TransformMessages(t.Messages())
 
 	var wire []wireMessage
-	if sys := llm.CurrentSystemMessage(msgs); sys != nil {
+	midConvo := model.Caps.MidConvoSystem
+	if midConvo {
+		// pi's verified-model path (compat.supportsMidConvoSystemMessages):
+		// the head is the LEADING system message alone; later system
+		// deltas ride in place below, so a mid-session section change
+		// never rewrites the request head and the implicit prefix cache
+		// survives it.
+		if text := renderSystem(msgs[0]); text != "" {
+			wire = append(wire, wireMessage{Role: "system", Content: text})
+		}
+	} else if sys := llm.CurrentSystemMessage(msgs); sys != nil {
 		if text := renderSystem(*sys); text != "" {
 			wire = append(wire, wireMessage{Role: "system", Content: text})
 		}
@@ -160,7 +221,15 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 		m := msgs[i]
 		switch m.Role {
 		case llm.RoleSystem:
-			continue // collapsed above
+			if midConvo {
+				// In-place delta: content + section patches, chronological.
+				// Tool deltas never render here — the top-level tools
+				// array carries them (CurrentTools replay, unchanged).
+				if text := renderSystem(m); text != "" {
+					wire = append(wire, wireMessage{Role: "system", Content: text})
+				}
+			}
+			continue // default: collapsed into the head above
 		case llm.RoleUser:
 			var parts []wireContent
 			for _, b := range m.Content {
@@ -182,12 +251,20 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 		case llm.RoleAssistant:
 			wm := wireMessage{Role: "assistant"}
 			var text []string
+			var thinking []string
+			thinkField := ""
 			for _, b := range m.Content {
 				switch b.Kind {
 				case llm.BlockText:
 					text = append(text, b.Text)
 				case llm.BlockThinking:
-					wm.Reasoning = b.Text
+					if strings.TrimSpace(b.Text) == "" {
+						continue
+					}
+					if thinkField == "" {
+						thinkField = b.Signature // first non-empty block (pi)
+					}
+					thinking = append(thinking, b.Text)
 				case llm.BlockToolCall:
 					args := compactJSONString(b.Arguments)
 					wm.ToolCalls = append(wm.ToolCalls, wireToolCall{
@@ -200,37 +277,68 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 			if len(text) > 0 {
 				wm.Content = strings.Join(text, "\n")
 			}
-			if wm.Content == nil && len(wm.ToolCalls) == 0 && wm.Reasoning == "" {
-				if m.Error == "" {
-					return nil, fmt.Errorf("assistant message %d has no wireable content", i)
-				}
-				// Recorded failure turns (including legacy content-less
-				// ones) replay as plain text instead of poisoning the
-				// session.
-				wm.Content = "[turn failed: " + m.Error + "]"
+			// pi's full replay: ALL historical thinking rides back under
+			// the dialect key it arrived in (recorded as the block's
+			// Signature at stream time); no valid field name = no replay.
+			if len(thinking) > 0 && isReasoningReplayField(thinkField) {
+				wm.setReasoning(thinkField, strings.Join(thinking, "\n"))
+			}
+			// pi's DeepSeek compat: with a reasoning-capable model every
+			// replayed assistant message must carry reasoning_content —
+			// empty when the turn produced no thinking (their API
+			// rejects the missing field). Never saves an otherwise
+			// empty message from the skip below (pi skips it too).
+			deepSeekEmpty := false
+			if model.Reasoning && isDeepSeekURL(opts.BaseURL) && wm.ReasoningContent == nil {
+				empty := ""
+				wm.ReasoningContent = &empty
+				deepSeekEmpty = true
+			}
+			if wm.Content == nil && len(wm.ToolCalls) == 0 && (!wm.hasReasoning() || deepSeekEmpty) {
+				continue // nothing wireable (the transform already dropped error turns)
 			}
 			wire = append(wire, wm)
 		case llm.RoleTool:
 			// One role "tool" wire message per tool-result block;
 			// providers match results to calls by tool_call_id.
+			// chat/completions has no image blocks in tool messages, so
+			// images follow in a user message when the model accepts image
+			// input (pi's shape, gated on model.input containing "image").
 			for _, b := range m.Content {
 				if b.Kind != llm.BlockToolResult {
 					continue
 				}
 				var parts []string
+				var images []llm.Block
 				for _, nb := range b.Content {
-					if nb.Kind == llm.BlockText {
+					switch nb.Kind {
+					case llm.BlockText:
 						parts = append(parts, nb.Text)
+					case llm.BlockImage:
+						images = append(images, nb)
 					}
 				}
 				body := strings.Join(parts, "\n")
 				if strings.TrimSpace(body) == "" {
-					body = "(no output)"
+					if len(images) > 0 {
+						body = "(see attached image)"
+					} else {
+						body = "(no output)"
+					}
 				}
 				if b.IsError && body != "" && !strings.HasPrefix(body, "ERROR") {
 					body = "ERROR: " + body
 				}
 				wire = append(wire, wireMessage{Role: "tool", ToolCallID: b.ID, Content: body})
+				if len(images) > 0 && model.Caps.ImageInput {
+					// pi gates the forwarding on model.input containing
+					// "image"; text-only models keep the placeholder.
+					content := []wireContent{{Type: "text", Text: "Attached image(s) from tool result:"}}
+					for _, im := range images {
+						content = append(content, wireContent{Type: "image_url", ImageURL: &wireImageURL{URL: "data:" + im.MimeType + ";base64," + im.Data}})
+					}
+					wire = append(wire, wireMessage{Role: "user", Content: content})
+				}
 			}
 		default:
 			return nil, fmt.Errorf("message %d: unknown role %q", i, m.Role)
@@ -256,6 +364,11 @@ func BuildRequest(model llm.Model, t *llm.Transcript, opts llm.StreamOptions) (*
 		Messages:      wire,
 		Tools:         tools,
 		MaxTokens:     opts.MaxTokens,
+	}
+	if req.MaxTokens == 0 {
+		// pi's buildBaseOptions: fall back to the model's catalog cap,
+		// then a flat default.
+		req.MaxTokens = model.MaxTokens
 	}
 	if req.MaxTokens == 0 {
 		req.MaxTokens = 8192

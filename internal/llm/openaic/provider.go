@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"time"
 
 	"scode/internal/llm"
 )
@@ -18,6 +17,9 @@ type Provider struct {
 	Key     string
 	BaseURL string
 	HTTP    *http.Client
+	// Transport carries pi's settings.retry.provider knobs
+	// (timeout, attempts, backoff cap).
+	Transport llm.TransportConfig
 }
 
 func New(key, baseURL string) *Provider {
@@ -26,6 +28,10 @@ func New(key, baseURL string) *Provider {
 	}
 	return &Provider{Key: key, BaseURL: baseURL, HTTP: http.DefaultClient}
 }
+
+// transport resolves the provider's transport config (defaults apply
+// inside llm).
+func (p *Provider) transport() llm.TransportConfig { return p.Transport }
 
 func (p *Provider) Name() string { return "openai-compat" }
 
@@ -40,10 +46,6 @@ func (p *Provider) Caps() llm.Capabilities {
 		ToolAdditions:          false,
 	}
 }
-
-const maxAttempts = 4
-
-const streamTimeout = 10 * time.Minute
 
 func (p *Provider) resolveKey(opts llm.StreamOptions) string {
 	if opts.APIKey != "" {
@@ -85,14 +87,14 @@ func (p *Provider) Stream(ctx context.Context, model llm.Model, t *llm.Transcrip
 		defer close(out)
 		if _, ok := ctx.Deadline(); !ok {
 			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, streamTimeout)
+			ctx, cancel = context.WithTimeout(ctx, p.transport().Timeout())
 			defer cancel()
 		}
 		resp, err := llm.PostStreamWithRetry(ctx, p.HTTP, p.BaseURL+"/chat/completions", map[string][]string{
 			"content-type":  {"application/json"},
 			"accept":        {"text/event-stream"},
 			"authorization": {"Bearer " + key},
-		}, body, maxAttempts)
+		}, body, p.transport())
 		if err != nil {
 			p.emitError(out, model.ID, err.Error())
 			return
@@ -133,8 +135,24 @@ func (p *Provider) pump(ctx context.Context, r io.Reader, model string, out chan
 		return nil
 	})
 	if err == nil && !sawTerminal {
-		// EOF before [DONE]/error: synthesize the promised terminal.
-		err = fmt.Errorf("stream ended before a terminal event")
+		// Some OpenAI-compatible relays close the connection without the
+		// [DONE] sentinel. If a finish_reason (or provider error) already
+		// arrived, generation is semantically complete, so a clean EOF is a
+		// normal end rather than a truncation. Only a stream that ends with
+		// neither the sentinel nor a finish_reason is genuinely truncated.
+		if asm.finished != "" || asm.err != "" {
+			for _, e := range asm.conclude() {
+				select {
+				case out <- e:
+				case <-ctx.Done():
+					return
+				}
+			}
+			sawTerminal = true
+		} else {
+			// EOF before [DONE]/error: synthesize the promised terminal.
+			err = fmt.Errorf("stream ended before a terminal event")
+		}
 	}
 	if err != nil && err != io.EOF {
 		msg := asm.snapshot()

@@ -1,0 +1,489 @@
+/* App shell: collapsible sidebar + main column. */
+
+.app-shell {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+.app-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* ---------- sidebar ---------- */
+
+.sidebar {
+  width: var(--sidebar-w);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  transition: width 0.2s ease;
+  overflow: hidden;
+}
+.sidebar.collapsed { width: var(--sidebar-w-collapsed); }
+
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 8px;
+  min-height: 48px;
+}
+.sidebar .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: calc(var(--ui-font-size) + 1px);
+  color: var(--accent);
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.sidebar.collapsed .brand .brand-name { display: none; }
+.brand-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--on-accent);
+  flex-shrink: 0;
+}
+
+.new-chat-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 12px 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 500;
+  font-size: calc(var(--ui-font-size) - 1px);
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.new-chat-btn:hover { background: var(--accent-hover); }
+.sidebar.collapsed .new-chat-btn {
+  margin: 4px 10px 10px;
+  padding: 8px 0;
+  justify-content: center;
+}
+.sidebar.collapsed .new-chat-btn span { display: none; }
+
+.session-scroll { flex: 1; overflow-y: auto; padding: 0 8px 8px; }
+.session-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 8px 2px;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--text-3);
+}
+.session-toolbar .prune-btn {
+  width: 20px;
+  height: 20px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.session-toolbar:hover .prune-btn { opacity: 1; }
+
+/* folder group header */
+.session-folder-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 8px 5px;
+  color: var(--text-2);
+  font-size: calc(var(--ui-font-size) - 1px);
+  font-weight: 500;
+  text-align: left;
+  border-radius: var(--radius-sm);
+  transition: background 0.12s, color 0.12s;
+}
+.session-folder-head:hover { background: var(--surface-3); color: var(--text); }
+.session-folder-head.active { color: var(--text); }
+.session-folder-head svg { flex-shrink: 0; color: var(--text-3); }
+.session-folder-head .folder-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-folder-head .folder-count {
+  flex-shrink: 0;
+  font-size: calc(var(--ui-font-size) - 3px);
+  font-weight: 500;
+  color: var(--text-3);
+}
+/* Session titles line up with the folder group names: this padding (8)
+   + the state slot (14px) + item gap (8px) equals the folder header's
+   padding (8) + folder icon (16) + gap (6). The slot hosts the live
+   spinner; idle rows show pure text like the reference. */
+.session-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: calc(var(--ui-font-size) - 0.5px);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.session-item:hover { background: var(--surface-3); }
+.session-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: var(--surface-3);
+}
+/* selected row: light gray highlight with regular dark text (no accent
+   tint), matching the reference */
+.session-item.active { background: var(--surface-3); color: var(--text); }
+.session-item svg { flex-shrink: 0; }
+.session-item .session-flag {
+  width: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.session-item .session-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* right-aligned terse age (刚刚 / 2天), light gray; gives way to the
+   delete button on hover so the title keeps its room */
+.session-item .session-time {
+  flex-shrink: 0;
+  font-size: calc(var(--ui-font-size) - 3px);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.session-item:hover .session-time { display: none; }
+/* hidden via display (not opacity) so idle rows have no trailing slot:
+   the timestamp hugs the right edge; hover swaps it for the button */
+.session-item .delete-btn {
+  display: none;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+.session-item:hover .delete-btn { display: inline-flex; }
+.session-item .delete-btn:hover { color: var(--danger); background: var(--danger-soft); }
+/* Live-state indicators: a session with a run in flight spins; one
+   waiting on an approval answer shows a shield. */
+.session-item .session-live { color: var(--accent); flex-shrink: 0; }
+.session-item .session-wait { color: var(--warning, #d97706); flex-shrink: 0; }
+.sidebar.collapsed .session-item { justify-content: center; padding: 7px 0; }
+.sidebar.collapsed .session-item .session-title,
+.sidebar.collapsed .session-item .session-time { display: none; }
+.session-empty { padding: 8px; }
+
+.sidebar-foot {
+  border-top: 1px solid var(--border);
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.foot-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: calc(var(--ui-font-size) - 1px);
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+.foot-item:hover { background: var(--surface-3); color: var(--text); }
+.foot-item .foot-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.foot-item .foot-sub {
+  display: block;
+  font-size: calc(var(--ui-font-size) - 3px);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar.collapsed .foot-item { justify-content: center; padding: 7px 0; }
+.sidebar.collapsed .foot-item .foot-label { display: none; }
+
+/* ---------- top bar ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  /* no own background: blends into the main column's var(--bg) */
+  flex-shrink: 0;
+}
+.topbar .tb-title {
+  font-size: calc(var(--ui-font-size) - 1px);
+  font-weight: 600;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topbar .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex-shrink: 0;
+}
+.topbar .status-dot.running { background: var(--warning); animation: pulse 1.2s infinite; }
+.topbar .status-dot.ready { background: var(--success); }
+.topbar .status-dot.dead { background: var(--danger); }
+@keyframes pulse { 50% { opacity: 0.4; } }
+.topbar .spacer { flex: 1; }
+
+/* workspace quick-open: a bordered split button — folder icon opens the
+   directory, the caret segment drops the "open with" menu */
+.ws-open {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.ws-open:hover { border-color: var(--border-strong); }
+.ws-open:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+/* menu open: tint the whole group like the plan/task buttons' active state */
+.ws-open:has(.ws-caret.active) { border-color: var(--accent-soft-2); }
+/* inner segments fill the group: rounded only on the outer corners,
+   with a divider between them */
+.ws-open .icon-btn {
+  width: 30px;
+  height: 26px;
+  border-radius: calc(var(--radius-sm) - 1px) 0 0 calc(var(--radius-sm) - 1px);
+}
+.ws-open .ws-caret {
+  width: 22px;
+  height: 26px;
+  padding: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0 calc(var(--radius-sm) - 1px) calc(var(--radius-sm) - 1px) 0;
+}
+/* Scoped under .ws-open: the landing page's WorkspacePicker reuses the
+   ws-menu/ws-option class names with stretched geometry (left+right),
+   which here would push this menu off the window's right edge. */
+.ws-open .ws-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 190px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  z-index: 50;
+}
+.ws-open .ws-menu-path {
+  padding: 6px 10px 4px;
+  font-size: calc(var(--ui-font-size) - 3px);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl; /* keep the folder tail visible on long paths */
+  text-align: left;
+}
+.ws-open .ws-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font-size: calc(var(--ui-font-size) - 1px);
+  color: var(--text);
+  text-align: left;
+}
+.ws-open .ws-option:hover { background: var(--surface-3); }
+.ws-open .ws-option svg { color: var(--text-2); flex-shrink: 0; }
+.ws-open .ws-option:hover svg { color: var(--text); }
+.ws-open .ws-menu-error { padding: 4px 10px 6px; font-size: calc(var(--ui-font-size) - 2px); color: var(--danger); }
+
+/* usage stats cluster */
+.usage-stats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.usage-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: default;
+}
+.usage-label { color: var(--text-3); }
+.usage-value { font-weight: 600; color: var(--text); }
+
+/* context ring widget: the 16px gauge in the topbar; hovering it (or
+   the card it opens) keeps the card below visible */
+.ctx-widget {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 2px; /* generous hover target around the small ring */
+  cursor: default;
+}
+.ctx-ring-track { stroke: var(--surface-3); }
+.ctx-ring-arc {
+  stroke: var(--accent);
+  transition: stroke-dasharray 0.4s ease, stroke 0.3s;
+}
+.ctx-ring.mid .ctx-ring-arc { stroke: var(--warning); }
+.ctx-ring.high .ctx-ring-arc { stroke: var(--danger); }
+
+/* the popup: padding bridges the 6px gap so the pointer traveling from
+   ring to card never leaves the hover area */
+.ctx-pop {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  padding-top: 6px;
+  z-index: 50;
+}
+.ctx-card {
+  width: 248px;
+  padding: 12px 14px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  font-variant-numeric: tabular-nums;
+}
+.ctx-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ctx-title {
+  font-size: calc(var(--ui-font-size) - 1px);
+  font-weight: 600;
+  color: var(--text);
+}
+.ctx-total {
+  font-size: calc(var(--ui-font-size) - 3px);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.ctx-bar {
+  margin-top: 8px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.ctx-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.4s ease, background 0.3s;
+}
+.ctx-bar.mid .ctx-bar-fill { background: var(--warning); }
+.ctx-bar.high .ctx-bar-fill { background: var(--danger); }
+
+.ctx-rows {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.ctx-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--text-2);
+}
+.ctx-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+/* same-hue shades, strongest first (消息) fading out (其他) */
+.ctx-row:nth-child(1) .ctx-dot { background: color-mix(in srgb, var(--accent) 100%, transparent); }
+.ctx-row:nth-child(2) .ctx-dot { background: color-mix(in srgb, var(--accent) 80%, transparent); }
+.ctx-row:nth-child(3) .ctx-dot { background: color-mix(in srgb, var(--accent) 62%, transparent); }
+.ctx-row:nth-child(4) .ctx-dot { background: color-mix(in srgb, var(--accent) 46%, transparent); }
+.ctx-row:nth-child(5) .ctx-dot { background: color-mix(in srgb, var(--accent) 32%, transparent); }
+.ctx-row:nth-child(6) .ctx-dot { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.ctx-row-label { flex: 1; }
+.ctx-row-value { font-weight: 600; color: var(--text); }
+
+.ctx-divider {
+  margin: 10px 0 8px;
+  border-top: 1px solid var(--border);
+}
+.ctx-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--text-2);
+}
+.ctx-summary-value { font-weight: 600; color: var(--text); }
+
+/* ---------- server exit banner ---------- */
+
+.exit-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: calc(var(--ui-font-size) - 1px);
+  border-bottom: 1px solid var(--danger-border);
+}

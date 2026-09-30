@@ -210,3 +210,8 @@ func looksBinary(lines []string) bool {
 	}
 	return false
 }
+
+// PromptContribution is pi's grepToolSystemPromptContribution.
+func (GrepTool) PromptContribution() (string, []string) {
+	return "Search file contents for patterns (respects .gitignore)", nil
+}

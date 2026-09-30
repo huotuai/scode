@@ -1,0 +1,180 @@
+/* Background-task panel: detached bash commands, visible and killable.
+   Anchored under the TopBar so a leaked task is never invisible. */
+
+.task-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.task-btn:hover { background: var(--surface-3); color: var(--text); }
+.task-btn.active { color: var(--accent); border-color: var(--accent-soft-2); background: var(--accent-soft); }
+.task-btn .task-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--warning);
+  color: #fff;
+  font-size: calc(var(--ui-font-size) - 4px);
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+}
+
+.task-panel {
+  position: absolute;
+  top: 52px;
+  right: 12px;
+  z-index: 20;
+  width: min(520px, calc(100% - 24px));
+  max-height: min(60vh, 560px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.task-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+.task-panel-title { font-size: calc(var(--ui-font-size) - 1px); font-weight: 600; color: var(--text); }
+.task-running-count {
+  font-size: calc(var(--ui-font-size) - 3px);
+  font-weight: 600;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.task-panel-head .spacer { flex: 1; }
+.task-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.task-icon-btn:hover { background: var(--surface-3); color: var(--text); }
+
+.task-error {
+  padding: 8px 12px;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-bottom: 1px solid var(--danger-border);
+}
+.task-empty {
+  padding: 20px 14px;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--text-3);
+  text-align: center;
+}
+
+.task-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+}
+.task-item {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+}
+.task-item + .task-item { margin-top: 4px; }
+.task-item:hover { background: var(--surface-2); }
+.task-item.running { border-color: var(--warning-soft); }
+.task-item.exited { border-color: var(--border); }
+.task-item.killed { border-color: var(--border); opacity: 0.85; }
+
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--text-2);
+}
+.task-row .spacer { flex: 1; }
+.task-item.running .task-state { color: var(--warning); }
+.task-item.exited .task-state { color: var(--success); }
+.task-item.killed .task-state { color: var(--danger); }
+.task-id { font-family: 'Cascadia Code', Consolas, monospace; font-weight: 600; color: var(--text); }
+.task-state-label { font-size: calc(var(--ui-font-size) - 3px); color: var(--text-2); }
+.task-duration { font-size: calc(var(--ui-font-size) - 3px); color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+.task-kill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: calc(var(--ui-font-size) - 3px);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--danger);
+  cursor: pointer;
+}
+.task-kill:hover { background: var(--danger-soft); }
+
+.task-command {
+  margin-top: 4px;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: calc(var(--ui-font-size) - 2.5px);
+  color: var(--tool-args);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-output-wrap { margin-top: 6px; }
+.task-output-toggle {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: calc(var(--ui-font-size) - 3px);
+  color: var(--accent);
+  cursor: pointer;
+}
+.task-output-toggle:hover { text-decoration: underline; }
+.task-output {
+  margin: 6px 0 0;
+  padding: 8px;
+  max-height: 220px;
+  overflow: auto;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: calc(var(--ui-font-size) - 2.5px);
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-all;
+}

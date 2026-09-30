@@ -1,0 +1,43 @@
+{
+  "name": "scode-desktop",
+  "productName": "SCode",
+  "version": "0.1.0",
+  "private": true,
+  "description": "scode desktop client (Electron shell over `scode serve` stdio JSON-RPC)",
+  "main": "src/main.js",
+  "allowScripts": {
+    "esbuild": true,
+    "electron": true,
+    "@deepseek-ai/dsh-subprocess-local": true,
+    "koffi": true,
+    "node-pty": true,
+    "@google/genai": true,
+    "protobufjs": true,
+    "remark-gfm": true
+  },
+  "scripts": {
+    "start": "electron .",
+    "dev": "concurrently -k -n vite,electron -c blue,yellow \"vite --config renderer/vite.config.mts\" \"electron . --dev\"",
+    "build": "vite build --config renderer/vite.config.mts",
+    "typecheck": "tsc -p renderer/tsconfig.json",
+    "check": "node --check src/main.js && node --check src/preload.js",
+    "package": "node scripts/package.mjs"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^10.0.5",
+    "electron": "^35.0.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1"
+  },
+  "dependencies": {
+    "lucide-react": "^1.48.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "zustand": "^5.0.15"
+  }
+}

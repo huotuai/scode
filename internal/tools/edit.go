@@ -19,19 +19,25 @@ type EditTool struct{}
 func (EditTool) Decl() llm.Tool {
 	return llm.Tool{
 		Name:        "edit",
-		Description: "Edit a file by replacing exact text blocks. Each edit's oldText must match the file uniquely; provide more surrounding context when it does not. Multiple edits apply against the original content and must not overlap.",
-		Parameters:  json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"File path, absolute or relative to the working directory"},"edits":{"type":"array","items":{"type":"object","properties":{"oldText":{"type":"string","description":"Exact text to find (must be unique in the file)"},"newText":{"type":"string","description":"Replacement text"}},"required":["oldText","newText"]}}},"required":["path","edits"]}`),
+		Description: "Edit a file by replacing exact text blocks. Each edit's oldText must match the file uniquely; provide more surrounding context when it does not. Multiple edits apply against the original content and must not overlap. When the file sandbox confines this session, an edit outside the boundary may be retried ONCE with sandbox_permissions (the narrowest wider mode that suffices) + justification; the approval prompt asks the user.",
+		Parameters:  json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"File path, absolute or relative to the working directory"},"edits":{"type":"array","items":{"type":"object","properties":{"oldText":{"type":"string","description":"Exact text to find (must be unique in the file)"},"newText":{"type":"string","description":"Replacement text"}},"required":["oldText","newText"]}},"sandbox_permissions":{"type":"string","enum":["workspace-write","danger-full-access"],"description":"Sandbox escalation target for this call (requires justification)"},"justification":{"type":"string","description":"One-sentence reason for the sandbox escalation, shown to the user"}},"required":["path","edits"]}`),
 	}
 }
 
 // parseEditArgs repairs the common model mistakes pi handles.
-func parseEditArgs(args json.RawMessage) (path string, edits []editRequest, err error) {
+func parseEditArgs(args json.RawMessage) (path string, edits []editRequest, esc escalationArgs, err error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(args, &raw); err != nil {
-		return "", nil, err
+		return "", nil, esc, err
 	}
 	if p, ok := raw["path"]; ok {
 		_ = json.Unmarshal(p, &path)
+	}
+	if v, ok := raw["sandbox_permissions"]; ok {
+		_ = json.Unmarshal(v, &esc.permissions)
+	}
+	if v, ok := raw["justification"]; ok {
+		_ = json.Unmarshal(v, &esc.justification)
 	}
 
 	type editJSON struct {
@@ -46,12 +52,12 @@ func parseEditArgs(args json.RawMessage) (path string, edits []editRequest, err 
 			var s string
 			if json.Unmarshal(e, &s) == nil {
 				if json.Unmarshal([]byte(s), &list) != nil {
-					return "", nil, fmt.Errorf("edits must be an array of {oldText,newText}")
+					return "", nil, esc, fmt.Errorf("edits must be an array of {oldText,newText}")
 				}
 			} else {
 				var one editJSON
 				if json.Unmarshal(e, &one) != nil || one.OldText == "" {
-					return "", nil, fmt.Errorf("edits must be an array of {oldText,newText}")
+					return "", nil, esc, fmt.Errorf("edits must be an array of {oldText,newText}")
 				}
 				list = []editJSON{one}
 			}
@@ -66,23 +72,30 @@ func parseEditArgs(args json.RawMessage) (path string, edits []editRequest, err 
 		list = []editJSON{one}
 	}
 	if path == "" {
-		return "", nil, fmt.Errorf("path is required")
+		return "", nil, esc, fmt.Errorf("path is required")
 	}
 	if len(list) == 0 {
-		return "", nil, fmt.Errorf("edits must contain at least one {oldText,newText}")
+		return "", nil, esc, fmt.Errorf("edits must contain at least one {oldText,newText}")
 	}
 	for _, e := range list {
 		edits = append(edits, editRequest{oldText: e.OldText, newText: e.NewText})
 	}
-	return path, edits, nil
+	return path, edits, esc, nil
 }
 
 func (EditTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.ToolResult {
-	path, edits, err := parseEditArgs(args)
+	path, edits, esc, err := parseEditArgs(args)
 	if err != nil {
 		return agent.ErrorResult("invalid arguments: " + err.Error())
 	}
-	full := Resolve(tc, path)
+	policy, escErr := ResolvePolicy(tc, esc.permissions, esc.justification, Resolve(tc, path))
+	if escErr != nil {
+		return *escErr
+	}
+	full, err := FenceWrite(policy, tc, path)
+	if err != nil {
+		return SandboxError(err, "operation")
+	}
 
 	var output string
 	err = WithFileMutation(full, func() error {
@@ -183,4 +196,14 @@ func UnifiedDiff(a, b, path string) string {
 		sb.WriteString("+" + bm[j] + "\n")
 	}
 	return sb.String()
+}
+
+// PromptContribution is pi's editToolSystemPromptContribution.
+func (EditTool) PromptContribution() (string, []string) {
+	return "Make precise file edits with exact text replacement, including multiple disjoint edits in one call", []string{
+		"Use edit for precise changes (edits[].oldText must match exactly)",
+		"When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls",
+		"Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.",
+		"Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.",
+	}
 }

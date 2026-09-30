@@ -270,8 +270,9 @@ func (a *assembler) handle(name, data string) ([]llm.Event, bool, error) {
 func mapStopReason(r string) llm.StopReason {
 	switch r {
 	case "end_turn", "stop_sequence", "pause_turn":
-		// pause_turn/stop_sequence are normal completions for this loop
-		// (pi resubmits pause_turn; end-of-turn is the safe subset).
+		// pi maps pause_turn to stop too (anthropic-messages.ts:1518 —
+		// the "resubmit" comment is stale); stop_sequence is never
+		// supplied by us.
 		return llm.StopEndTurn
 	case "max_tokens":
 		return llm.StopLength
@@ -283,7 +284,10 @@ func mapStopReason(r string) llm.StopReason {
 	case "":
 		return ""
 	default:
-		return llm.StopReason(r)
+		// pi throws on unhandled stop reasons (the API may add new
+		// values); surface as an error turn rather than replaying an
+		// unknown state.
+		return llm.StopError
 	}
 }
 

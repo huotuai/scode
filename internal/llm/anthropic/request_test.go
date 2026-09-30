@@ -81,10 +81,11 @@ func TestBuildRequestCachePlacement(t *testing.T) {
 		t.Fatal("last user tail block lacks cache_control")
 	}
 
-	// Wire shape: tool results folded into user messages, 4 wire messages
-	// (user, assistant tool_use, user tool_result + thanks merged).
-	if len(req.Messages) != 3 {
-		t.Fatalf("messages = %d, want 3 (merged consecutive user): %+v", len(req.Messages), req.Messages)
+	// Wire shape (pi): tool results group into their own user message,
+	// consecutive same-role messages are NOT merged — 4 wire messages
+	// (user, assistant tool_use, user tool_result, user thanks).
+	if len(req.Messages) != 4 {
+		t.Fatalf("messages = %d, want 4 (no same-role merging): %+v", len(req.Messages), req.Messages)
 	}
 	if req.Messages[1].Content[0].Type != "tool_use" || req.Messages[1].Content[0].ID != "t1" {
 		t.Fatalf("assistant tool_use wrong: %+v", req.Messages[1].Content[0])
@@ -92,8 +93,8 @@ func TestBuildRequestCachePlacement(t *testing.T) {
 	if req.Messages[2].Content[0].Type != "tool_result" || req.Messages[2].Content[0].ToolUseID != "t1" {
 		t.Fatalf("tool_result folding wrong: %+v", req.Messages[2].Content[0])
 	}
-	if req.Messages[2].Content[1].Text != "thanks" {
-		t.Fatalf("merged user text missing: %+v", req.Messages[2].Content)
+	if req.Messages[3].Content[0].Text != "thanks" {
+		t.Fatalf("trailing user message missing: %+v", req.Messages[3].Content)
 	}
 }
 
@@ -158,8 +159,9 @@ func TestBuildRequestThinkingAndTemperature(t *testing.T) {
 	}
 }
 
-// A tool_use with no matching tool_result (aborted turn) must be
-// synthesized — Anthropic 400s otherwise and the session bricks.
+// A tool_use with no matching tool_result (interrupted turn) gets a
+// synthetic error result IN PLACE (pi's transform-messages) — Anthropic
+// 400s otherwise and the session bricks.
 func TestBuildRequestOrphanToolUseSynthesized(t *testing.T) {
 	tr, err := llm.NormalizeContext(llm.Context{
 		SystemPrompt: "p",
@@ -181,12 +183,22 @@ func TestBuildRequestOrphanToolUseSynthesized(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Consecutive tool messages group into one user message: the real
+	// result first, the synthetic orphan result right after it (in place,
+	// not appended at the end of the conversation).
 	last := req.Messages[len(req.Messages)-1]
 	if last.Role != "user" {
 		t.Fatalf("last message role = %s", last.Role)
 	}
-	if len(last.Content) != 1 || last.Content[0].Type != "tool_result" || last.Content[0].ToolUseID != "orphan_1" || !last.Content[0].IsError {
-		t.Fatalf("synthesized result = %+v", last.Content)
+	if len(last.Content) != 2 {
+		t.Fatalf("grouped results = %+v", last.Content)
+	}
+	if last.Content[0].ToolUseID != "answered_1" || last.Content[0].IsError {
+		t.Fatalf("real result = %+v", last.Content[0])
+	}
+	synth := last.Content[1]
+	if synth.ToolUseID != "orphan_1" || !synth.IsError || synth.Content[0].Text != "No result provided" {
+		t.Fatalf("synthesized result = %+v", synth)
 	}
 }
 
@@ -216,10 +228,9 @@ func TestBuildRequestSectionsRendering(t *testing.T) {
 // serialized request prefix byte-identical — modulo cache_control markers,
 // whose position legitimately moves to the new tail. Compare with markers
 // stripped: content must be stable.
-// Recorded failure turns (even legacy content-less ones) must replay as
-// text instead of failing request construction — regression for the
-// session-poisoning bug.
-func TestBuildRequestErrorTurnReplaysAsText(t *testing.T) {
+// Recorded failure turns must be SKIPPED in the request (pi's
+// transform-messages): the model retries from the last valid state.
+func TestBuildRequestErrorTurnSkipped(t *testing.T) {
 	tr, err := llm.NormalizeContext(llm.Context{
 		SystemPrompt: "p",
 		Messages: []llm.Message{
@@ -235,9 +246,16 @@ func TestBuildRequestErrorTurnReplaysAsText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	asst := req.Messages[1]
-	if asst.Role != "assistant" || len(asst.Content) != 1 || asst.Content[0].Text != "[turn failed: rate limited]" {
-		t.Fatalf("error turn wire shape = %+v", asst)
+	if len(req.Messages) != 2 {
+		t.Fatalf("wire messages = %d, want 2 (user, user — error turn skipped)", len(req.Messages))
+	}
+	for _, m := range req.Messages {
+		if m.Role == "assistant" {
+			t.Fatalf("error turn leaked into the request: %+v", m)
+		}
+	}
+	if req.Messages[1].Content[0].Text != "again" {
+		t.Fatalf("tail = %+v", req.Messages[1])
 	}
 }
 
@@ -293,4 +311,57 @@ func stripMarkers(msgs []wireMessage) []wireMessage {
 		}
 	}
 	return out
+}
+
+// Regression: thinking medium/high failed request building with the
+// default max_tokens (budget >= 8192). pi's adjustMaxTokensForThinking:
+// a caller cap stacks the budget on top; without one, thinking fits
+// inside the model cap, always leaving minAnswerTokens of answer room.
+func TestBuildRequestThinkingBudgetStacksOnMaxTokens(t *testing.T) {
+	tr := buildTestTranscript(t)
+
+	// No caller cap, no model cap: thinking fits inside the flat default.
+	req, err := BuildRequest(modelCaps(), tr, llm.StreamOptions{ThinkingLevel: "medium"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.MaxTokens != DefaultMaxOut {
+		t.Fatalf("medium max_tokens = %d, want %d", req.MaxTokens, DefaultMaxOut)
+	}
+	if req.Thinking == nil || req.Thinking.BudgetTokens != DefaultMaxOut-minAnswerTokens {
+		t.Fatalf("medium budget = %+v, want %d", req.Thinking, DefaultMaxOut-minAnswerTokens)
+	}
+
+	// Caller cap: the budget rides on top (thinking AND answer must fit).
+	req, err = BuildRequest(modelCaps(), tr, llm.StreamOptions{ThinkingLevel: "high", MaxTokens: 8192})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Thinking.BudgetTokens != 16384 || req.MaxTokens != 8192+16384 {
+		t.Fatalf("high with caller cap: budget=%d max=%d", req.Thinking.BudgetTokens, req.MaxTokens)
+	}
+
+	// Model cap without caller cap: max_tokens is the model cap and the
+	// budget shrinks to leave answer room.
+	m := modelCaps()
+	m.MaxTokens = 10000
+	req, err = BuildRequest(m, tr, llm.StreamOptions{ThinkingLevel: "high"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.MaxTokens != 10000 {
+		t.Fatalf("model-capped max_tokens = %d, want 10000", req.MaxTokens)
+	}
+	if req.Thinking.BudgetTokens != 10000-minAnswerTokens {
+		t.Fatalf("clamped budget = %d, want %d", req.Thinking.BudgetTokens, 10000-minAnswerTokens)
+	}
+
+	// Caller cap stacked with the budget still bends to the model cap.
+	req, err = BuildRequest(m, tr, llm.StreamOptions{ThinkingLevel: "high", MaxTokens: 8192})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.MaxTokens != 10000 || req.Thinking.BudgetTokens != 10000-minAnswerTokens {
+		t.Fatalf("caller+model cap: budget=%d max=%d", req.Thinking.BudgetTokens, req.MaxTokens)
+	}
 }

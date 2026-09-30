@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"time"
 
 	"scode/internal/llm"
 )
@@ -19,6 +18,9 @@ type Provider struct {
 	Key     string
 	BaseURL string
 	HTTP    *http.Client
+	// Transport carries pi's settings.retry.provider knobs
+	// (timeout, attempts, backoff cap).
+	Transport llm.TransportConfig
 }
 
 func New(key, baseURL string) *Provider {
@@ -27,6 +29,10 @@ func New(key, baseURL string) *Provider {
 	}
 	return &Provider{Key: key, BaseURL: baseURL, HTTP: http.DefaultClient}
 }
+
+// transport resolves the provider's transport config (defaults apply
+// inside llm).
+func (p *Provider) transport() llm.TransportConfig { return p.Transport }
 
 func (p *Provider) Name() string { return "anthropic" }
 
@@ -41,13 +47,6 @@ func (p *Provider) Caps() llm.Capabilities {
 		ToolAdditions: false,
 	}
 }
-
-// maxAttempts caps pre-stream retries. Once streaming has begun, failures
-// are terminal events — higher-level retry policy is the agent loop's call.
-const maxAttempts = 4
-
-// streamTimeout bounds a turn when the caller set no deadline.
-const streamTimeout = 10 * time.Minute
 
 func (p *Provider) resolveKey(opts llm.StreamOptions) string {
 	if opts.APIKey != "" {
@@ -78,7 +77,7 @@ func (p *Provider) Stream(ctx context.Context, model llm.Model, t *llm.Transcrip
 		defer close(out)
 		if _, ok := ctx.Deadline(); !ok {
 			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, streamTimeout)
+			ctx, cancel = context.WithTimeout(ctx, p.transport().Timeout())
 			defer cancel()
 		}
 		resp, err := p.post(ctx, key, body)
@@ -105,7 +104,7 @@ func (p *Provider) post(ctx context.Context, key string, body []byte) (*http.Res
 		"content-type":      {"application/json"},
 		"x-api-key":         {key},
 		"anthropic-version": {APIVersion},
-	}, body, maxAttempts)
+	}, body, p.transport())
 }
 
 // pump reads the SSE body through the assembler into the event channel.

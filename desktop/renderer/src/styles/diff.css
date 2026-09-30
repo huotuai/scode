@@ -1,0 +1,307 @@
+/* Diff rendering + the changes panel (workspace git diff). Added lines
+   are green (--diff-new-*), deleted lines red (--diff-old-*), shared with
+   the tool cards in chat. */
+
+.diff {
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: var(--code-font-size);
+  line-height: 1.5;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+}
+
+/* Shrink-to-fit inner box: as wide as the longest line, at least the
+   visible viewport. Rows are plain blocks filling it, so add/del
+   backgrounds span the full scroll width (a flex/grid row width fight
+   left them viewport-sized — the right-side blank bug). */
+.diff-inner {
+  display: inline-block;
+  min-width: 100%;
+  vertical-align: top;
+}
+
+.diff-hunk-head:not(:first-child) { border-top: 1px solid var(--border); }
+
+.diff-hunk-head {
+  padding: 2px 10px;
+  background: var(--accent-soft);
+  color: var(--text-3);
+  user-select: none;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.diff-line {
+  /* default: no wrap, horizontal scroll (设置 → 外观 → 长行自动换行) */
+  white-space: pre;
+  color: var(--text);
+  /* the add/del marker is a solid left bar (GitHub-style), context lines
+     keep a transparent bar so the gutter stays aligned */
+  border-left: 3px solid transparent;
+}
+.diff-line.add { background: var(--diff-new-bg); border-left-color: var(--diff-new-border); }
+.diff-line.del { background: var(--diff-old-bg); border-left-color: var(--diff-old-border); }
+[data-code-wrap='1'] .diff-inner { display: block; }
+[data-code-wrap='1'] .diff-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+[data-code-wrap='1'] .diff-code { display: inline; }
+/* 显示行号 off */
+[data-code-lines='0'] .diff-no { display: none; }
+[data-code-lines='0'] .diff-code { border-left: none; padding-left: 0; }
+
+.diff-no {
+  display: inline-block;
+  vertical-align: top;
+  width: 44px;
+  padding: 0 10px 0 6px;
+  text-align: right;
+  color: var(--text-3);
+  opacity: 0.7;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+/* gutter divider (matches the reference: numbers separated from code) */
+.diff-no + .diff-code { border-left: 1px solid var(--border); padding-left: 10px; }
+
+.diff-code {
+  display: inline-block;
+  vertical-align: top;
+  padding-right: 8px;
+}
+
+/* Inside a tool card the diff box follows the card's content margins. */
+.tool .diff { margin: 4px 12px 8px; }
+
+/* syntax highlighting inside diff lines */
+.tok-kw { color: var(--syn-kw); }
+.tok-str { color: var(--syn-str); }
+.tok-com { color: var(--syn-com); font-style: italic; }
+.tok-num { color: var(--syn-num); }
+.tok-type { color: var(--syn-type); }
+.tok-fn { color: var(--syn-fn); }
+
+.diff-file { display: flex; flex-direction: column; }
+.diff-file-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--text-2);
+}
+.diff-file-head + .diff { border-top-left-radius: 0; border-top-right-radius: 0; }
+.diff-file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+}
+.diff-file-stats { display: inline-flex; gap: 6px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.diff-stat-add { color: var(--diff-new-border); font-weight: 700; }
+.diff-stat-del { color: var(--diff-old-border); font-weight: 700; }
+.diff-file-tag {
+  flex-shrink: 0;
+  font-size: calc(var(--ui-font-size) - 4px);
+  font-weight: 600;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-3);
+  border: 1px solid var(--border);
+}
+.diff-file-tag.new { color: var(--diff-new-border); background: var(--diff-new-bg); border-color: transparent; }
+.diff-file-tag.del { color: var(--diff-old-border); background: var(--diff-old-bg); border-color: transparent; }
+
+.diff-binary {
+  padding: 10px 12px;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--text-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+}
+
+/* --- changes: TopBar summary chip + docked right pane --- */
+
+.changes-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-size: calc(var(--ui-font-size) - 2px);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.changes-btn:hover { background: var(--surface-3); color: var(--text); }
+.changes-btn.active { color: var(--accent); border-color: var(--accent-soft-2); background: var(--accent-soft); }
+.changes-btn .changes-label { font-weight: 500; line-height: 1; }
+.changes-btn .changes-stats {
+  display: inline-flex;
+  gap: 5px;
+  font-size: calc(var(--ui-font-size) - 3px);
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Docked right pane (a flex child of .app-shell, like the browser
+   panel): full height, splits the window with the chat instead of
+   floating over it. */
+.changes-panel {
+  flex-shrink: 0;
+  width: min(520px, 46vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.changes-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* mirror .topbar's 48px so the docked pane's header lines up
+     vertically with the session column's header */
+  height: 48px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+.changes-panel-title { font-size: calc(var(--ui-font-size) - 1px); font-weight: 600; color: var(--text); }
+.changes-count {
+  font-size: calc(var(--ui-font-size) - 3px);
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-variant-numeric: tabular-nums;
+}
+.changes-panel-head .spacer { flex: 1; }
+.changes-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.changes-icon-btn:hover { background: var(--surface-3); color: var(--text); }
+
+.changes-error {
+  padding: 8px 12px;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-bottom: 1px solid var(--danger-border);
+}
+.changes-truncated {
+  padding: 6px 12px;
+  font-size: calc(var(--ui-font-size) - 2.5px);
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-bottom: 1px solid var(--border);
+}
+.changes-empty {
+  padding: 20px 14px;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--text-3);
+  text-align: center;
+}
+
+.changes-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.changes-item + .changes-item { margin-top: 4px; }
+
+.changes-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+  font-size: calc(var(--ui-font-size) - 1.5px);
+  cursor: pointer;
+  text-align: left;
+}
+.changes-row:hover { background: var(--surface-2); }
+.changes-row.open { background: var(--surface-2); color: var(--text); }
+
+.changes-status {
+  flex-shrink: 0;
+  width: 22px;
+  text-align: center;
+  font-size: calc(var(--ui-font-size) - 4px);
+  font-weight: 700;
+  border-radius: 4px;
+  padding: 1px 0;
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+.changes-status.M { color: var(--warning); background: var(--warning-soft); }
+.changes-status.A { color: var(--success); background: var(--success-soft); }
+.changes-status.D { color: var(--danger); background: var(--danger-soft); }
+.changes-status.R { color: var(--accent); background: var(--accent-soft); }
+.changes-status.untracked { color: var(--text-3); }
+
+.changes-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl; /* long paths keep their tail (the filename) visible */
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: calc(var(--ui-font-size) - 2px);
+}
+.changes-stats {
+  flex-shrink: 0;
+  display: inline-flex;
+  gap: 6px;
+  font-size: calc(var(--ui-font-size) - 3px);
+  font-variant-numeric: tabular-nums;
+}
+.changes-item-body { margin: 2px 0 4px; }
+.changes-untracked-note {
+  padding: 6px 12px;
+  font-size: calc(var(--ui-font-size) - 2px);
+  color: var(--text-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
