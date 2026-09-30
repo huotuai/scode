@@ -20,3 +20,5 @@ desktop/tmp-*.js
 
 # Local progress/decision log stays out of the repo
 jindu.md
+.zcodeignore
+docs/
