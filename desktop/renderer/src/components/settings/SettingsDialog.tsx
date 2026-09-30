@@ -3,18 +3,23 @@ import { Cpu, Palette, X } from 'lucide-react';
 import { useUiStore, type SettingsSection } from '../../store/ui';
 import ModelSettings from './ModelSettings';
 import AppearanceSettings from './AppearanceSettings';
+import { useT } from '../../i18n';
 import '../../styles/settings.css';
 
-const SECTIONS: { key: SettingsSection; label: string; icon: typeof Cpu }[] = [
-  { key: 'appearance', label: '外观', icon: Palette },
-  { key: 'models', label: '模型', icon: Cpu },
-];
+// Section labels resolve per render (language switch re-renders).
+function sections(t: ReturnType<typeof useT>): { key: SettingsSection; label: string; icon: typeof Cpu }[] {
+  return [
+    { key: 'appearance', label: t('settings.appearance'), icon: Palette },
+    { key: 'models', label: t('settings.models'), icon: Cpu },
+  ];
+}
 
 // Settings dialog: left nav / right content split. Model profiles track
 // unsaved edits (dirtyRef); appearance options apply immediately. The
 // active page lives in the ui store so callers can open straight to a
 // section (e.g. the composer's 管理模型 lands on models).
 export default function SettingsDialog() {
+  const t = useT();
   const open = useUiStore(s => s.settingsOpen);
   const setOpen = useUiStore(s => s.setSettingsOpen);
   const section = useUiStore(s => s.settingsSection);
@@ -28,7 +33,7 @@ export default function SettingsDialog() {
   }, []);
 
   const requestClose = useCallback(() => {
-    if (dirtyRef.current && !confirm('有未保存的修改,确定关闭?')) return;
+    if (dirtyRef.current && !confirm(t('settings.unsavedConfirm'))) return;
     setOpen(false);
   }, [setOpen]);
 
@@ -43,6 +48,7 @@ export default function SettingsDialog() {
 
   if (!open) return null;
 
+  const SECTIONS = sections(t);
   const active = SECTIONS.find(s => s.key === section) ?? SECTIONS[0];
 
   return (
@@ -50,7 +56,7 @@ export default function SettingsDialog() {
       <div className="modal-panel settings-panel">
         <div className="settings-body">
           <nav className="settings-nav">
-            <div className="settings-nav-title">设置</div>
+            <div className="settings-nav-title">{t('settings.title')}</div>
             {SECTIONS.map(s => {
               const Icon = s.icon;
               return (
@@ -69,7 +75,7 @@ export default function SettingsDialog() {
             <div className="settings-content-head">
               <span>{active.label}</span>
               <span className="spacer" />
-              <button className="icon-btn" onClick={requestClose} title="关闭">
+              <button className="icon-btn" onClick={requestClose} title={t('common.close')}>
                 <X size={16} />
               </button>
             </div>

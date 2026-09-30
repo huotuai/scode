@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Check, Copy, GitFork } from 'lucide-react';
+import { useT } from '../../i18n';
 
 /** One chat row's hover rail. Lives under assistant replies (the end of
  *  a turn): copy + fork-from-here buttons and the reply's completion
@@ -13,6 +14,7 @@ export default function RowActions({
   ts?: number;
   onFork?: () => void;
 }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
@@ -33,11 +35,11 @@ export default function RowActions({
 
   return (
     <>
-      <button className="icon-btn row-action" onClick={copy} title="复制文本">
+      <button className="icon-btn row-action" onClick={copy} title={t('chat.copyText')}>
         {copied ? <Check size={14} /> : <Copy size={14} />}
       </button>
       {onFork && (
-        <button className="icon-btn row-action" onClick={onFork} title="从此轮分叉出新会话">
+        <button className="icon-btn row-action" onClick={onFork} title={t('chat.forkHere')}>
           <GitFork size={14} />
         </button>
       )}

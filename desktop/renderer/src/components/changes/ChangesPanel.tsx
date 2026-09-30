@@ -5,15 +5,24 @@ import type { FileDiff as ParsedFileDiff } from '../../lib/diff';
 import { parseUnifiedDiff } from '../../lib/diff';
 import DiffView from '../diff/DiffView';
 import { useChangesStore } from '../../store/changes';
+import { useT } from '../../i18n';
 import '../../styles/diff.css';
 
-const STATUS_LABEL: Record<string, string> = {
-  M: '修改',
-  A: '新增',
-  D: '删除',
-  R: '重命名',
-  '??': '未跟踪',
-};
+// statusLabel maps a git status letter to its display label (localized at
+// render time — a map built once would freeze the language at import).
+function statusLabel(t: ReturnType<typeof useT>, code: string): string {
+  switch (code) {
+    case 'M':
+      return t('changes.statusM');
+    case 'A':
+      return t('changes.statusA');
+    case 'D':
+      return t('changes.statusD');
+    case 'R':
+      return t('changes.statusR');
+  }
+  return t('changes.statusUntracked');
+}
 
 /** matchDiff pairs a status entry with its parsed diff. Deleted files are
  *  keyed by their old path; everything else by the new path. */
@@ -25,6 +34,7 @@ function matchDiff(file: GitChangedFile, diffs: ParsedFileDiff[]): ParsedFileDif
 }
 
 function ChangesItem({ file, diffs }: { file: GitChangedFile; diffs: ParsedFileDiff[] }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const diff = matchDiff(file, diffs);
   return (
@@ -33,7 +43,7 @@ function ChangesItem({ file, diffs }: { file: GitChangedFile; diffs: ParsedFileD
         {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         <span
           className={`changes-status ${file.untracked ? 'untracked' : file.status}`}
-          title={STATUS_LABEL[file.status] ?? file.status}
+          title={statusLabel(t, file.status)}
         >
           {file.status}
         </span>
@@ -53,7 +63,7 @@ function ChangesItem({ file, diffs }: { file: GitChangedFile; diffs: ParsedFileD
             <DiffView file={diff} />
           ) : (
             <div className="changes-untracked-note">
-              {file.untracked ? '未跟踪的新文件,不在 git diff 中' : '无文本差异(可能为二进制文件)'}
+              {file.untracked ? t('changes.untrackedNote') : t('changes.noDiff')}
             </div>
           )}
         </div>
@@ -63,6 +73,7 @@ function ChangesItem({ file, diffs }: { file: GitChangedFile; diffs: ParsedFileD
 }
 
 export default function ChangesPanel() {
+  const t = useT();
   const open = useChangesStore(s => s.open);
   const loading = useChangesStore(s => s.loading);
   const result = useChangesStore(s => s.result);
@@ -83,8 +94,8 @@ export default function ChangesPanel() {
     <div className="changes-panel">
       <div className="changes-panel-head">
         <FileDiff size={14} />
-        <span className="changes-panel-title">代码更改</span>
-        {files.length > 0 && <span className="changes-count">{files.length} 个文件</span>}
+        <span className="changes-panel-title">{t('changes.title')}</span>
+        {files.length > 0 && <span className="changes-count">{t('changes.fileCount', { n: files.length })}</span>}
         {(additions > 0 || deletions > 0) && (
           <span className="changes-stats">
             {additions > 0 && <span className="diff-stat-add">+{additions}</span>}
@@ -92,23 +103,23 @@ export default function ChangesPanel() {
           </span>
         )}
         <span className="spacer" />
-        <button className="changes-icon-btn" title="刷新" onClick={() => void refresh()}>
+        <button className="changes-icon-btn" title={t('common.refresh')} onClick={() => void refresh()}>
           {loading ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />}
         </button>
-        <button className="changes-icon-btn" title="关闭" onClick={() => setOpen(false)}>
+        <button className="changes-icon-btn" title={t('common.close')} onClick={() => setOpen(false)}>
           <X size={13} />
         </button>
       </div>
 
       {error && <div className="changes-error">{error}</div>}
       {result?.truncated && (
-        <div className="changes-truncated">差异内容过大,仅显示前一部分</div>
+        <div className="changes-truncated">{t('changes.truncated')}</div>
       )}
 
       {notRepo ? (
-        <div className="changes-empty">当前工作区不是 git 仓库,无法显示更改。</div>
+        <div className="changes-empty">{t('changes.notRepo')}</div>
       ) : files.length === 0 ? (
-        <div className="changes-empty">工作区没有未提交的更改。</div>
+        <div className="changes-empty">{t('changes.clean')}</div>
       ) : (
         <ul className="changes-list">
           {files.map(f => (
@@ -124,6 +135,7 @@ export default function ChangesPanel() {
  *  styled like the reference (green additions, red deletions). Clicking
  *  docks the changes pane on the right side of the window. */
 export function ChangesButton() {
+  const t = useT();
   const open = useChangesStore(s => s.open);
   const result = useChangesStore(s => s.result);
   const toggle = useChangesStore(s => s.toggle);
@@ -144,13 +156,13 @@ export function ChangesButton() {
       className={`changes-btn ${open ? 'active' : ''}`}
       title={
         files > 0
-          ? `代码更改:${files} 个文件(+${additions} −${deletions})`
-          : '代码更改(git diff)'
+          ? t('changes.buttonStats', { files, add: additions, del: deletions })
+          : t('changes.button')
       }
       onClick={toggle}
     >
       <FileDiff size={14} />
-      <span className="changes-label">更改</span>
+      <span className="changes-label">{t('changes.label')}</span>
       {(additions > 0 || deletions > 0) && (
         <span className="changes-stats">
           {additions > 0 && <span className="diff-stat-add">+{additions}</span>}

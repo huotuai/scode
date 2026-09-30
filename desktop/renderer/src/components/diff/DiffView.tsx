@@ -2,6 +2,7 @@ import { memo, useMemo, Fragment } from 'react';
 import type { DiffHunk, DiffLine, FileDiff } from '../../lib/diff';
 import { displayPath } from '../../lib/diff';
 import { highlightLines, langFromPath, type Token } from '../../lib/highlight';
+import { useT } from '../../i18n';
 import '../../styles/diff.css';
 
 // DiffLineRow: one line of a diff — line number gutter, colored left bar
@@ -89,6 +90,7 @@ export function HunksView({ hunks, lang }: { hunks: DiffHunk[]; lang?: string })
  *  path and +/- counts, then its hunks. The language comes from the file
  *  extension, so it can be used without extra wiring. */
 export default function DiffView({ file }: { file: FileDiff }) {
+  const t = useT();
   const path = displayPath(file);
   const lang = langFromPath(path);
   return (
@@ -101,14 +103,14 @@ export default function DiffView({ file }: { file: FileDiff }) {
             {file.deletions > 0 && <span className="diff-stat-del">−{file.deletions}</span>}
           </span>
         )}
-        {file.isNew && <span className="diff-file-tag new">新增</span>}
-        {file.isDeleted && <span className="diff-file-tag del">删除</span>}
-        {file.isRename && <span className="diff-file-tag">重命名</span>}
+        {file.isNew && <span className="diff-file-tag new">{t('diff.new')}</span>}
+        {file.isDeleted && <span className="diff-file-tag del">{t('diff.deleted')}</span>}
+        {file.isRename && <span className="diff-file-tag">{t('diff.renamed')}</span>}
       </div>
       {file.hunks.length > 0 ? (
         <HunksView hunks={file.hunks} lang={lang} />
       ) : (
-        <div className="diff-binary">二进制文件或内容为空,无文本差异</div>
+        <div className="diff-binary">{t('diff.binary')}</div>
       )}
     </div>
   );

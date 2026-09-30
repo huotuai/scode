@@ -3,12 +3,14 @@ import { Check, ChevronDown, Folder, FolderOpen, FolderPlus, X } from 'lucide-re
 import { useSessionStore } from '../../store/session';
 import { useWorkspacesStore } from '../../store/workspaces';
 import { folderName, sameFolder } from '../../lib/paths';
+import { useT } from '../../i18n';
 
 // Workspace picker for the new-session page: the current folder plus a
 // dropdown of recently used directories (persisted across restarts) and a
 // "pick a new folder" escape hatch. Picking an entry switches the active
 // workspace; the × on a stale entry just forgets it.
 export default function WorkspacePicker() {
+  const t = useT();
   const workspace = useSessionStore(s => s.workspace);
   const selectWorkspace = useSessionStore(s => s.selectWorkspace);
   const chooseWorkspace = useSessionStore(s => s.chooseWorkspace);
@@ -53,17 +55,17 @@ export default function WorkspacePicker() {
       <button
         className="ws-current"
         onClick={() => setOpen(o => !o)}
-        title={workspace ? `工作目录:${workspace}` : '选择工作目录'}
+        title={workspace ? t('workspace.titleWith', { ws: workspace }) : t('workspace.select')}
       >
         <FolderOpen size={14} />
-        <span className="ws-label">工作目录</span>
-        <span className="ws-path">{workspace || '选择工作目录'}</span>
+        <span className="ws-label">{t('workspace.label')}</span>
+        <span className="ws-path">{workspace || t('workspace.select')}</span>
         <ChevronDown size={13} className={`ws-caret${open ? ' open' : ''}`} />
       </button>
       {open && (
         <div className="ws-menu">
-          <div className="ws-menu-title">最近使用的目录</div>
-          {dirs.length === 0 && <div className="ws-menu-empty dim">暂无记录</div>}
+          <div className="ws-menu-title">{t('workspace.recentTitle')}</div>
+          {dirs.length === 0 && <div className="ws-menu-empty dim">{t('workspace.empty')}</div>}
           {dirs.map(d => {
             const active = sameFolder(d, workspace);
             return (
@@ -89,7 +91,7 @@ export default function WorkspacePicker() {
                   <button
                     className="icon-btn ws-remove"
                     onClick={e => remove(e, d)}
-                    title="从列表移除"
+                    title={t('workspace.remove')}
                   >
                     <X size={12} />
                   </button>
@@ -99,7 +101,7 @@ export default function WorkspacePicker() {
           })}
           <button className="ws-option ws-new" onClick={pickNew}>
             <FolderPlus size={14} />
-            选择新文件夹…
+            {t('workspace.browse')}
           </button>
         </div>
       )}

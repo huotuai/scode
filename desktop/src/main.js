@@ -74,7 +74,7 @@ function cleanTitle(text) {
   const m = /^<skill\s+name="([^"]*)"[^>]*>[\s\S]*?<\/skill>\s*([\s\S]*)$/.exec(text);
   if (m) {
     const args = m[2].replace(/\s+/g, ' ').trim();
-    return args || `技能 ${m[1]}`;
+    return args || `skill ${m[1]}`;
   }
   return text;
 }
@@ -310,10 +310,10 @@ async function gitChanges(cwd) {
   try {
     inside = (await runGit(['rev-parse', '--is-inside-work-tree'], cwd)).trim();
   } catch (err) {
-    if (err.code === 'ENOENT') throw new Error('未找到 git 命令,请先安装 Git');
-    throw new Error('当前工作区不是 git 仓库');
+    if (err.code === 'ENOENT') throw new Error('git command not found — install Git first');
+    throw new Error('not a git repository');
   }
-  if (inside !== 'true') throw new Error('当前工作区不是 git 仓库');
+  if (inside !== 'true') throw new Error('not a git repository');
   const files = parseGitStatus(await runGit(['status', '--porcelain=v1', '-z'], cwd));
   let hasHead = true;
   try {
@@ -549,7 +549,7 @@ app.whenReady().then(() => {
     try {
       if (!fs.statSync(dir).isDirectory()) throw new Error('not a directory');
     } catch {
-      throw new Error(`工作区不可用:${dir}`);
+      throw new Error(`workspace unavailable: ${dir}`);
     }
     // Switch the active folder and make sure its server is up. The
     // previous folder's server (and its running sessions) stays alive.
@@ -590,7 +590,7 @@ app.whenReady().then(() => {
 
   handle('open-external', async url => {
     if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
-      throw new Error('仅支持打开 http/https 链接');
+      throw new Error('only http/https links can be opened');
     }
     await shell.openExternal(url);
     return { ok: true };
@@ -609,7 +609,7 @@ app.whenReady().then(() => {
     // it hands off to the running instance and exits quickly, so awaiting
     // close tells us whether the command actually exists on PATH.
     await new Promise((resolve, reject) => {
-      const fail = () => reject(new Error('启动 VSCode 失败:code 命令不在 PATH 中'));
+      const fail = () => reject(new Error('failed to launch VSCode: the code command is not on PATH'));
       const child = spawn('code', [dir], { shell: true, stdio: 'ignore' });
       child.on('error', fail);
       child.on('close', code => (code === 0 ? resolve() : fail()));

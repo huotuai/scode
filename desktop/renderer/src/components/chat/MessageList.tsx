@@ -6,6 +6,7 @@ import { useSessionStore, useActiveRuntime } from '../../store/session';
 import ChatItemView from './ChatItemView';
 import RunGroup from './RunGroup';
 import RowActions from './RowActions';
+import { useT } from '../../i18n';
 import '../../styles/chat.css';
 
 // groupItems folds each finished run's process (thinking, tool calls,
@@ -85,6 +86,7 @@ function groupItems(
 const EMPTY_ITEMS: ChatItem[] = [];
 
 export default function MessageList() {
+  const t = useT();
   const sessionId = useSessionStore(s => s.sessionId);
   // The session in view selects its own log; background sessions keep
   // accumulating theirs off-screen.
@@ -137,7 +139,7 @@ export default function MessageList() {
         {compacting && (
           <div className="run-indicator">
             <Loader2 size={13} className="spin" />
-            <span>正在压缩上下文…</span>
+            <span>{t('chat.compacting')}</span>
           </div>
         )}
       </div>
@@ -146,14 +148,15 @@ export default function MessageList() {
 }
 
 const EmptyState = memo(function EmptyState() {
+  const t = useT();
   return (
     <div className="empty-state">
       <div className="empty-logo">
         <Bot size={26} />
       </div>
-      <div className="empty-title">开始一个新任务</div>
+      <div className="empty-title">{t('chat.emptyTitle')}</div>
       <div className="empty-sub">
-        输入任务描述,SCode 将调用工具完成它。试试开启 Plan 模式先做只读调研。
+        {t('chat.emptyDesc')}
       </div>
     </div>
   );

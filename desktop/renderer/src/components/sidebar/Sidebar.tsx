@@ -18,6 +18,7 @@ import { useSessionStore } from '../../store/session';
 import { useUiStore } from '../../store/ui';
 import { useChatStore } from '../../store/chat';
 import { folderName, normalizeFolder, sameFolder } from '../../lib/paths';
+import { t, useT } from '../../i18n';
 
 interface FolderGroup {
   key: string;
@@ -30,12 +31,12 @@ interface FolderGroup {
 // 刚刚 / 5分钟 / 3小时 / 2天 / 9/28 (older than ~a month becomes a date).
 function fmtRelative(ms: number): string {
   const diff = Date.now() - ms;
-  if (diff < 60_000) return '刚刚';
+  if (diff < 60_000) return t('sidebar.justNow');
   const h = Math.floor(diff / 3_600_000);
-  if (h < 1) return `${Math.floor(diff / 60_000)}分钟`;
-  if (h < 24) return `${h}小时`;
+  if (h < 1) return t('sidebar.minutes', { n: Math.floor(diff / 60_000) });
+  if (h < 24) return t('sidebar.hours', { n: h });
   const d = Math.floor(h / 24);
-  if (d < 30) return `${d}天`;
+  if (d < 30) return t('sidebar.days', { n: d });
   const dt = new Date(ms);
   return `${dt.getMonth() + 1}/${dt.getDate()}`;
 }
@@ -67,6 +68,7 @@ function groupByFolder(entries: SessionHistoryEntry[], active: string): FolderGr
 }
 
 export default function Sidebar() {
+  const t = useT();
   const collapsed = useUiStore(s => s.sidebarCollapsed);
   const toggleSidebar = useUiStore(s => s.toggleSidebar);
   const setSettingsOpen = useUiStore(s => s.setSettingsOpen);
@@ -95,14 +97,14 @@ export default function Sidebar() {
 
   const onDelete = (e: React.MouseEvent, id: string, cwd: string) => {
     e.stopPropagation();
-    if (confirm(`删除会话「${id}」?此操作不可恢复。`)) deleteSession(id, cwd);
+    if (confirm(t('sidebar.confirmDelete', { id }))) deleteSession(id, cwd);
   };
 
   const onPrune = async () => {
-    if (!confirm('清理当前工作区的空会话(从未发送消息的)?')) return;
+    if (!confirm(t('sidebar.confirmPrune'))) return;
     const n = await pruneEmpty();
     const key = useSessionStore.getState().sessionId ?? '';
-    useChatStore.getState().addNote(key, n > 0 ? `已清理 ${n} 个空会话` : '没有需要清理的空会话');
+    useChatStore.getState().addNote(key, n > 0 ? t('sidebar.pruned', { n }) : t('sidebar.nothingToPrune'));
   };
 
   return (
@@ -117,25 +119,25 @@ export default function Sidebar() {
         <button
           className="icon-btn"
           onClick={toggleSidebar}
-          title={collapsed ? '展开侧栏' : '折叠侧栏'}
+          title={collapsed ? t('sidebar.expand') : t('sidebar.collapse')}
         >
           {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
         </button>
       </div>
 
-      <button className="new-chat-btn" onClick={newSession} title="新建会话">
+      <button className="new-chat-btn" onClick={newSession} title={t('sidebar.newChat')}>
         <Plus size={15} />
-        <span>新建会话</span>
+        <span>{t('sidebar.newChat')}</span>
       </button>
 
       <div className="session-scroll">
         {groups.length === 0 && !collapsed && (
-          <div className="session-empty dim">暂无历史会话</div>
+          <div className="session-empty dim">{t('sidebar.empty')}</div>
         )}
         {!collapsed && groups.length > 0 && (
           <div className="session-toolbar">
-            <span className="session-toolbar-label">项目</span>
-            <button className="icon-btn prune-btn" onClick={onPrune} title="清理当前工作区的空会话">
+            <span className="session-toolbar-label">{t('sidebar.project')}</span>
+            <button className="icon-btn prune-btn" onClick={onPrune} title={t('sidebar.pruneTitle')}>
               <Eraser size={12} />
             </button>
           </div>
@@ -195,7 +197,7 @@ export default function Sidebar() {
                       <button
                         className="icon-btn delete-btn"
                         onClick={e => onDelete(e, s.id, s.cwd)}
-                        title="删除会话"
+                        title={t('sidebar.deleteSession')}
                       >
                         <Trash2 size={12} />
                       </button>
@@ -209,9 +211,9 @@ export default function Sidebar() {
       </div>
 
       <div className="sidebar-foot">
-        <button className="foot-item" onClick={() => setSettingsOpen(true)} title="设置">
+        <button className="foot-item" onClick={() => setSettingsOpen(true)} title={t('sidebar.settings')}>
           <Settings size={16} />
-          <span className="foot-label">设置</span>
+          <span className="foot-label">{t('sidebar.settings')}</span>
         </button>
       </div>
     </aside>

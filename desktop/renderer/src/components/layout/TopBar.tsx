@@ -7,14 +7,12 @@ import { TaskButton } from '../tasks/TaskPanel';
 import { PlanButton } from '../plan/PlanPanel';
 import { ChangesButton } from '../changes/ChangesPanel';
 import type { UsageReport, ContextBreakdown } from '../../types';
+import { useT, fmtTokens } from '../../i18n';
 
-function fmtTok(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
-  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, '') + 'k';
-  return String(n);
-}
+// (the hover card's token numbers go through i18n.fmtTokens)
 
 export default function TopBar() {
+  const t = useT();
   const sessionId = useSessionStore(s => s.sessionId);
   const sessions = useSessionStore(s => s.sessions);
   const rt = useActiveRuntime();
@@ -31,22 +29,22 @@ export default function TopBar() {
   const dead = serverExit !== null && sameFolder(serverExit.workspace, rt.cwd || workspace);
   const dotClass = dead ? 'dead' : running ? 'running' : 'ready';
   const dotTitle = dead
-    ? `服务已退出(${serverExit!.code})`
+    ? t('topbar.serverExited', { code: serverExit!.code })
     : running
-      ? '运行中'
-      : '就绪';
+      ? t('topbar.running')
+      : t('topbar.ready');
 
   return (
     <>
       {serverExit !== null && (
         <div className="exit-banner">
-          scode serve({serverExit.workspace}) 已退出({serverExit.code}),该工作区的会话已停止
+          {t('topbar.exitedNote', { workspace: serverExit.workspace, code: serverExit.code })}
         </div>
       )}
       <div className="topbar">
         <span className={`status-dot ${dotClass}`} title={dotTitle} />
         <span className="tb-title" title={sessionId || ''}>
-          {title || sessionId || '新会话'}
+          {title || sessionId || t('topbar.newSession')}
         </span>
         <span className="spacer" />
         {usage && <UsageStats usage={usage} />}
@@ -71,6 +69,7 @@ function VSCodeIcon({ size = 14 }: { size?: number }) {
 /** Workspace quick-open: the folder icon opens the directory directly;
  *  the caret drops a menu with alternative openers (VSCode). */
 function WorkspaceOpen({ workspace }: { workspace: string }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState('');
   const ref = useRef<HTMLDivElement>(null);
@@ -99,14 +98,14 @@ function WorkspaceOpen({ workspace }: { workspace: string }) {
     <div className="ws-open" ref={ref}>
       <button
         className="icon-btn"
-        title={`打开本地目录:${workspace}`}
+        title={t('topbar.openLocal', { ws: workspace })}
         onClick={() => act(() => openPath(workspace))}
       >
         <FolderOpen size={15} />
       </button>
       <button
         className={`icon-btn ws-caret${open ? ' active' : ''}`}
-        title="更多打开方式"
+        title={t('topbar.moreOpen')}
         onClick={() => {
           setOpen(v => !v);
           setError('');
@@ -120,10 +119,10 @@ function WorkspaceOpen({ workspace }: { workspace: string }) {
             {workspace}
           </div>
           <button className="ws-option" onClick={() => act(() => openPath(workspace))}>
-            <FolderOpen size={14} /> 打开本地目录
+            <FolderOpen size={14} /> {t('topbar.openLocalEntry')}
           </button>
           <button className="ws-option" onClick={() => act(() => openInVSCode(workspace))}>
-            <VSCodeIcon /> 通过 VSCode 打开
+            <VSCodeIcon /> {t('topbar.openVscode')}
           </button>
           {error && <div className="ws-menu-error">{error}</div>}
         </div>
@@ -132,12 +131,8 @@ function WorkspaceOpen({ workspace }: { workspace: string }) {
   );
 }
 
-/** 万-based context numbers for the hover card title (8.9万/100万). */
-function fmtCtx(n: number): string {
-  if (n >= 100_000_000) return (n / 100_000_000).toFixed(1).replace(/\.0$/, '') + '亿';
-  if (n >= 10_000) return (n / 10_000).toFixed(1).replace(/\.0$/, '') + '万';
-  return String(n);
-}
+// Hover-card numbers go through i18n.fmtTokens (zh 万/亿, en K/M).
+
 
 /** Ring gauge (the topbar context icon): light track + progress arc,
  *  colored by the same occupancy tiers as the old inline meter. */
@@ -167,20 +162,23 @@ function ContextRing({ pct, level }: { pct: number | null; level: string }) {
 /** Hover-card breakdown rows: colored dot + label + share of the used
  *  context. Categories are chars/4 estimates; "other" absorbs the gap
  *  so the rows sum to ~100%. */
-const BREAKDOWN_ROWS: { key: keyof ContextBreakdown; label: string }[] = [
-  { key: 'messages', label: '消息' },
-  { key: 'sysTools', label: '系统工具' },
-  { key: 'sysPrompt', label: '系统提示词' },
-  { key: 'skills', label: '技能' },
-  { key: 'mcpTools', label: 'MCP 工具' },
-  { key: 'other', label: '其他' },
-];
+function breakdownRows(t: ReturnType<typeof useT>): { key: keyof ContextBreakdown; label: string }[] {
+  return [
+    { key: 'messages', label: t('topbar.bdMessages') },
+    { key: 'sysTools', label: t('topbar.bdSysTools') },
+    { key: 'sysPrompt', label: t('topbar.bdSysPrompt') },
+    { key: 'skills', label: t('topbar.bdSkills') },
+    { key: 'mcpTools', label: t('topbar.bdMcpTools') },
+    { key: 'other', label: t('topbar.bdOther') },
+  ];
+}
 
 function BreakdownRows({ breakdown, total }: { breakdown?: ContextBreakdown; total: number }) {
+  const t = useT();
   if (!breakdown) return null;
   return (
     <div className="ctx-rows">
-      {BREAKDOWN_ROWS.map(row => {
+      {breakdownRows(t).map(row => {
         const v = breakdown[row.key] ?? 0;
         const pct = total > 0 ? (v / total) * 100 : 0;
         return (
@@ -200,6 +198,7 @@ function BreakdownRows({ breakdown, total }: { breakdown?: ContextBreakdown; tot
 // number moved here from its old topbar chip). The cost chip stays
 // inline.
 function UsageStats({ usage }: { usage: UsageReport }) {
+  const t = useT();
   const [hover, setHover] = useState(false);
   const { contextTokens, contextWindow, input, cacheRead, costUSD } = usage;
 
@@ -226,11 +225,11 @@ function UsageStats({ usage }: { usage: UsageReport }) {
           <div className="ctx-pop">
             <div className="ctx-card">
               <div className="ctx-head">
-                <span className="ctx-title">上下文容量</span>
+                <span className="ctx-title">{t('topbar.ctxTitle')}</span>
                 <span className="ctx-total">
                   {contextWindow > 0
-                    ? `${fmtCtx(contextTokens)}/${fmtCtx(contextWindow)}(${pctLabel})`
-                    : `${fmtTok(contextTokens)} tokens(窗口未知)`}
+                    ? `${fmtTokens(contextTokens)}/${fmtTokens(contextWindow)}(${pctLabel})`
+                    : t('topbar.ctxUnknown', { tokens: fmtTokens(contextTokens) })}
                 </span>
               </div>
               <div className={`ctx-bar ${ctxLevel}`}>
@@ -241,7 +240,7 @@ function UsageStats({ usage }: { usage: UsageReport }) {
               <BreakdownRows breakdown={usage.breakdown} total={contextTokens} />
               <div className="ctx-divider" />
               <div className="ctx-summary">
-                <span>平均缓存命中率</span>
+                <span>{t('topbar.cacheHit')}</span>
                 <span className="ctx-summary-value">{hitRate === null ? '—' : `${hitRate}%`}</span>
               </div>
             </div>

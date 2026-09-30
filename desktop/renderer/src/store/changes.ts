@@ -71,8 +71,9 @@ export const useChangesStore = create<ChangesState>((set, get) => ({
     } catch (err) {
       const msg = errText(err);
       // A non-repo workspace is expected (any folder can be opened): show
-      // a quiet empty state, keep any stale result for the badge.
-      const notRepo = msg.includes('不是 git 仓库') || msg.includes('未找到 git');
+      // a quiet empty state, keep any stale result for the badge. The
+      // main process throws stable English markers.
+      const notRepo = msg.includes('not a git repository') || msg.includes('git command not found');
       set({
         error: notRepo ? null : msg,
         notRepo,

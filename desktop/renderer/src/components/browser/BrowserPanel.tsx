@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, RotateCw, ExternalLink, X, Globe } from 'lucide-
 import { useUiStore } from '../../store/ui';
 import { openExternal } from '../../lib/rpc';
 import type { WebviewElement } from '../../webview';
+import { useT } from '../../i18n';
 import '../../styles/browser.css';
 
 // Right-side in-app browser. Session links open in this panel's <webview>
@@ -10,6 +11,7 @@ import '../../styles/browser.css';
 // chat UI itself away. The guest shares no session storage with the chat
 // renderer (persist:browser partition keeps logins across panel opens).
 export default function BrowserPanel() {
+  const t = useT();
   const url = useUiStore(s => s.browserUrl);
   const width = useUiStore(s => s.browserWidth);
   const setWidth = useUiStore(s => s.setBrowserWidth);
@@ -83,7 +85,7 @@ export default function BrowserPanel() {
       <div className="browser-bar">
         <button
           className="icon-btn"
-          title="后退"
+          title={t('browser.back')}
           disabled={!canBack}
           onClick={() => wv()?.goBack()}
         >
@@ -91,13 +93,13 @@ export default function BrowserPanel() {
         </button>
         <button
           className="icon-btn"
-          title="前进"
+          title={t('browser.forward')}
           disabled={!canFwd}
           onClick={() => wv()?.goForward()}
         >
           <ArrowRight size={15} />
         </button>
-        <button className="icon-btn" title="刷新" onClick={() => wv()?.reload()}>
+        <button className="icon-btn" title={t('common.refresh')} onClick={() => wv()?.reload()}>
           <RotateCw size={14} className={loading ? 'spin' : undefined} />
         </button>
         <form
@@ -113,17 +115,17 @@ export default function BrowserPanel() {
             onChange={e => setAddress(e.target.value)}
             onFocus={e => e.target.select()}
             spellCheck={false}
-            aria-label="地址"
+            aria-label={t('browser.address')}
           />
         </form>
         <button
           className="icon-btn"
-          title="在系统浏览器中打开"
+          title={t('browser.openExternal')}
           onClick={() => openExternal(wv()?.getURL() || url).catch(() => {})}
         >
           <ExternalLink size={14} />
         </button>
-        <button className="icon-btn" title="关闭" onClick={close}>
+        <button className="icon-btn" title={t('common.close')} onClick={close}>
           <X size={15} />
         </button>
       </div>

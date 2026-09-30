@@ -5,6 +5,7 @@ import type { DiffLine } from '../../lib/diff';
 import { diffTexts } from '../../lib/diff';
 import { langFromPath } from '../../lib/highlight';
 import { DiffLines, HunksView } from '../diff/DiffView';
+import { useT } from '../../i18n';
 
 type ToolItem = Extract<ChatItem, { kind: 'tool' }>;
 
@@ -120,6 +121,7 @@ const ToolCard = memo(function ToolCard({ item }: { item: ToolItem }) {
 const EDIT_DIFF_MAX = 40_000;
 
 function EditDiff({ path, edits }: { path: string; edits: EditPair[] }) {
+  const t = useT();
   const lang = langFromPath(path);
   const tooBig = edits.reduce((n, e) => n + e.oldText.length + e.newText.length, 0) > EDIT_DIFF_MAX;
   const allHunks = useMemo(
@@ -128,19 +130,19 @@ function EditDiff({ path, edits }: { path: string; edits: EditPair[] }) {
   );
   return (
     <div>
-      <div className="tool-path">编辑 {path}</div>
+      <div className="tool-path">{t('chat.editLabel', { path })}</div>
       {allHunks ? (
         edits.map((e, i) => (
           <div key={i}>
             {edits.length > 1 && (
               <div className="tool-path">
-                修改 {i + 1}/{edits.length}
+                {t('chat.editCounter', { i: i + 1, n: edits.length })}
               </div>
             )}
             {allHunks[i].length > 0 ? (
               <HunksView hunks={allHunks[i]} lang={lang} />
             ) : (
-              <div className="tool-path">内容无变化</div>
+              <div className="tool-path">{t('chat.contentUnchanged')}</div>
             )}
           </div>
         ))
@@ -161,6 +163,7 @@ function EditDiff({ path, edits }: { path: string; edits: EditPair[] }) {
 const WRITE_DIFF_MAX_LINES = 80;
 
 function WriteDiff({ path, content }: { path: string; content: string }) {
+  const t = useT();
   const lang = langFromPath(path);
   const lines = useMemo(() => {
     const all = content === '' ? [] : content.split('\n');
@@ -175,10 +178,10 @@ function WriteDiff({ path, content }: { path: string; content: string }) {
   }, [content]);
   return (
     <div>
-      <div className="tool-path">写入 {path}</div>
+      <div className="tool-path">{t('chat.writeLabel', { path })}</div>
       <DiffLines lines={lines.out} lang={lang} />
       {lines.total > WRITE_DIFF_MAX_LINES && (
-        <div className="tool-path">… 共 {lines.total} 行,仅显示前 {WRITE_DIFF_MAX_LINES} 行</div>
+        <div className="tool-path">{t('chat.writeTruncated', { total: lines.total, shown: WRITE_DIFF_MAX_LINES })}</div>
       )}
     </div>
   );

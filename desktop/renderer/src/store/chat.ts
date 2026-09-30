@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import type { ChatItem, SessionEvent, TranscriptMessage } from '../types';
+// Aliased: replay loops name their task/item variables `t`.
+import { t as i18nT } from '../i18n';
 
 // ---------------------------------------------------------------------------
 // multi-session chat state
@@ -352,7 +354,7 @@ export const useChatStore = create<ChatState>((set, get) => {
       for (const t of toolIndex.values()) {
         if (t.state === 'running') {
           t.state = 'error';
-          t.result = '(会话中断,工具未完成)';
+          t.result = i18nT('store.toolAborted');
         }
       }
       resetCtx(ctxFor(k));

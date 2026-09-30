@@ -7,6 +7,7 @@ import ToolCard from './ToolCard';
 import { useUiStore } from '../../store/ui';
 import { openExternal } from '../../lib/rpc';
 import { highlightLines, langFromFence, type Token } from '../../lib/highlight';
+import { useT } from '../../i18n';
 
 // Clicking a link must never navigate the chat UI away: http(s) links
 // open in the right-side browser panel, anything else (mailto:, custom
@@ -107,6 +108,7 @@ const ChatItemView = memo(function ChatItemView({
   item: ChatItem;
   actions?: ReactNode;
 }) {
+  const t = useT();
   switch (item.kind) {
     case 'user':
       return (
@@ -115,7 +117,7 @@ const ChatItemView = memo(function ChatItemView({
             {item.images && item.images.length > 0 && (
               <div className="msg-images">
                 {item.images.map((src, i) => (
-                  <img key={i} src={src} alt="图片" />
+                  <img key={i} src={src} alt={t('chat.imageAlt')} />
                 ))}
               </div>
             )}
@@ -172,6 +174,7 @@ export default ChatItemView;
 // is thinking but stays open afterwards — a plain `open={item.streaming}`
 // collapsed the block under the reader the moment the stream ended.
 function ThinkingBlock({ item }: { item: Extract<ChatItem, { kind: 'thinking' }> }) {
+  const t = useT();
   const [open, setOpen] = useState(item.streaming);
   const bodyRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -192,7 +195,7 @@ function ThinkingBlock({ item }: { item: Extract<ChatItem, { kind: 'thinking' }>
     >
       <summary>
         <Brain size={13} />
-        <span>{item.streaming ? '正在思考…' : '思考过程'}</span>
+        <span>{item.streaming ? t('chat.thinkingStreaming') : t('chat.thinking')}</span>
       </summary>
       <div className="thinking-body" ref={bodyRef}>{item.text}</div>
     </details>

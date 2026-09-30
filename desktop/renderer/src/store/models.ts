@@ -3,15 +3,9 @@ import type { ModelProfile, ModelsListResult } from '../types';
 import { rpc, errText } from '../lib/rpc';
 import { useSessionStore, patchRuntime } from './session';
 import { useChatStore, DRAFT_KEY } from './chat';
+import { t, thinkingLabel } from '../i18n';
 
-/** 推理强度显示名;'' 显示为"默认"(跟随设置/模型默认)。 */
-export const THINKING_LABELS: Record<string, string> = {
-  '': '默认',
-  off: '关闭',
-  low: '低',
-  medium: '中',
-  high: '高',
-};
+// Reasoning-effort display names live in i18n.thinkingLabel (localized).
 
 interface ModelsState {
   models: { label: string; provider: string; model: string; reasoning?: boolean }[];
@@ -72,7 +66,7 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
         model,
       });
       patchRuntime(sessionId, { provider: st.provider, model: st.model });
-      chat.addNote(sessionId, `模型已切换:${st.provider} / ${st.model}`);
+      chat.addNote(sessionId, t('store.modelSwitched', { provider: st.provider, model: st.model }));
     } catch (err) {
       chat.addError(sessionId, errText(err));
       throw err;
@@ -94,7 +88,7 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
         level,
       });
       patchRuntime(sessionId, { thinking: st.thinking ?? '' });
-      chat.addNote(sessionId, `推理强度已切换:${THINKING_LABELS[st.thinking] ?? st.thinking}`);
+      chat.addNote(sessionId, t('store.thinkingSwitched', { label: thinkingLabel(st.thinking ?? '') }));
     } catch (err) {
       chat.addError(sessionId, errText(err));
       throw err;

@@ -3,6 +3,7 @@ import { Plus, Star, Pencil, Trash2 } from 'lucide-react';
 import type { ModelProfile } from '../../types';
 import { useModelsStore } from '../../store/models';
 import { errText } from '../../lib/rpc';
+import { useT } from '../../i18n';
 
 interface FormState {
   name: string;
@@ -63,6 +64,7 @@ interface Props {
 // Model settings panel, embedded as a section of SettingsDialog (the
 // dialog owns the modal frame and close confirmation).
 export default function ModelSettings({ onDirtyChange }: Props) {
+  const t = useT();
   const profiles = useModelsStore(s => s.profiles);
   const defaultChoice = useModelsStore(s => s.defaultChoice);
   const refresh = useModelsStore(s => s.refresh);
@@ -78,7 +80,7 @@ export default function ModelSettings({ onDirtyChange }: Props) {
   const clearForm = () => {
     setForm(emptyForm);
     setEditingName('');
-    setStatus('新建模型配置');
+    setStatus(t('modelSettings.newProfile'));
     setDirty(false);
   };
 
@@ -97,7 +99,7 @@ export default function ModelSettings({ onDirtyChange }: Props) {
   const fillForm = (p: ModelProfile) => {
     setForm(toForm(p));
     setEditingName(p.name);
-    setStatus(`编辑中:${p.name}`);
+    setStatus(t('modelSettings.editing', { name: p.name }));
     setDirty(false);
   };
 
@@ -110,7 +112,7 @@ export default function ModelSettings({ onDirtyChange }: Props) {
     e.preventDefault();
     const name = form.name.trim();
     if (!name) {
-      setStatus('名称必填');
+      setStatus(t('modelSettings.nameRequired'));
       return;
     }
     const payload: ModelProfile & { original?: string } = {
@@ -138,7 +140,7 @@ export default function ModelSettings({ onDirtyChange }: Props) {
     try {
       await saveProfile(payload);
       setEditingName(name);
-      setStatus(`已保存:${name}`);
+      setStatus(t('modelSettings.saved', { name }));
       setDirty(false);
     } catch (err) {
       setStatus(errText(err));
@@ -146,11 +148,11 @@ export default function ModelSettings({ onDirtyChange }: Props) {
   };
 
   const onDelete = async (name: string) => {
-    if (!confirm(`删除模型配置「${name}」?`)) return;
+    if (!confirm(t('modelSettings.confirmDelete', { name }))) return;
     try {
       await deleteProfile(name);
       if (editingName === name) clearForm();
-      setStatus(`已删除:${name}`);
+      setStatus(t('modelSettings.deleted', { name }));
     } catch (err) {
       setStatus(errText(err));
     }
@@ -159,7 +161,7 @@ export default function ModelSettings({ onDirtyChange }: Props) {
   const onSetDefault = async (p: ModelProfile) => {
     try {
       await setDefault(p.name, p.model);
-      setStatus(`已设为默认:${p.name}`);
+      setStatus(t('modelSettings.setDefaultDone', { name: p.name }));
     } catch (err) {
       setStatus(errText(err));
     }
@@ -176,39 +178,39 @@ export default function ModelSettings({ onDirtyChange }: Props) {
   return (
     <>
       <div className="profile-list-head">
-        <span className="profile-list-title">模型配置</span>
+        <span className="profile-list-title">{t('modelSettings.title')}</span>
         <span className="spacer" />
         <button className="btn sm" onClick={clearForm}>
           <Plus size={13} />
-          新建
+          {t('common.new')}
         </button>
       </div>
       <div className="profile-list">
-        {profiles.length === 0 && <div className="dim">暂无模型配置,点击"新建"添加。</div>}
+        {profiles.length === 0 && <div className="dim">{t('modelSettings.empty')}</div>}
         {profiles.map(p => (
           <div key={p.name} className="profile-row">
             <div className="profile-info">
               <div className="profile-name">
                 {p.name}
-                {p.name === defaultChoice.provider && <span className="badge accent">默认</span>}
+                {p.name === defaultChoice.provider && <span className="badge accent">{t('modelSettings.defaultBadge')}</span>}
               </div>
               <div className="dim profile-sub">
-                {p.protocol || 'openai-compat'} · {p.model || '(默认模型)'}
+                {p.protocol || 'openai-compat'} · {p.model || t('modelSettings.defaultModelMark')}
                 {p.baseUrl ? ` · ${p.baseUrl}` : ''}
               </div>
             </div>
             <div className="profile-actions">
-              <button className="btn sm" onClick={() => onSetDefault(p)} title="设为默认">
+              <button className="btn sm" onClick={() => onSetDefault(p)} title={t('modelSettings.setDefault')}>
                 <Star size={12} />
-                设为默认
+                {t('modelSettings.setDefault')}
               </button>
               <button className="btn sm" onClick={() => fillForm(p)}>
                 <Pencil size={12} />
-                编辑
+                {t('common.edit')}
               </button>
               <button className="btn sm danger-ghost" onClick={() => onDelete(p.name)}>
                 <Trash2 size={12} />
-                删除
+                {t('common.delete')}
               </button>
             </div>
           </div>
@@ -218,13 +220,13 @@ export default function ModelSettings({ onDirtyChange }: Props) {
       <form onSubmit={onSave} className="profile-form" autoComplete="off">
         <div className="form-grid">
           <label>
-            名称
-            <input value={form.name} onChange={set('name')} placeholder="如 kimi" />
+            {t('modelSettings.nameLabel')}
+            <input value={form.name} onChange={set('name')} placeholder={t('modelSettings.namePlaceholder')} />
           </label>
           <label>
-            协议
+            {t('modelSettings.protocolLabel')}
             <select value={form.protocol} onChange={set('protocol')}>
-              <option value="">默认(openai-compat)</option>
+              <option value="">{t('modelSettings.protocolDefault')}</option>
               <option value="openai-compat">openai-compat</option>
               <option value="openai-responses">openai-responses</option>
               <option value="azure-openai-responses">azure-openai-responses</option>
@@ -233,8 +235,8 @@ export default function ModelSettings({ onDirtyChange }: Props) {
             </select>
           </label>
           <label>
-            模型 ID
-            <input value={form.model} onChange={set('model')} placeholder="如 k3" />
+            {t('modelSettings.modelIdLabel')}
+            <input value={form.model} onChange={set('model')} placeholder={t('modelSettings.namePlaceholder')} />
           </label>
           <label>
             baseUrl
@@ -253,16 +255,16 @@ export default function ModelSettings({ onDirtyChange }: Props) {
             <input type="number" min={0} value={form.maxTokens} onChange={set('maxTokens')} />
           </label>
           <label>
-            图片输入
+            {t('modelSettings.imageInput')}
             <select value={form.imageInput} onChange={set('imageInput')}>
-              <option value="">默认</option>
-              <option value="true">支持</option>
-              <option value="false">不支持</option>
+              <option value="">{t('modelSettings.optionDefault')}</option>
+              <option value="true">{t('modelSettings.optionYes')}</option>
+              <option value="false">{t('modelSettings.optionNo')}</option>
             </select>
           </label>
           <label className="check">
             <input type="checkbox" checked={form.reasoning} onChange={set('reasoning')} />
-            支持思考(reasoning)
+            {t('modelSettings.reasoning')}
           </label>
         </div>
         <div className="form-grid pricing">
@@ -284,8 +286,8 @@ export default function ModelSettings({ onDirtyChange }: Props) {
           </label>
         </div>
         <div className="form-foot">
-          <button type="submit" className="btn primary">保存</button>
-          <button type="button" className="btn" onClick={clearForm}>清空</button>
+          <button type="submit" className="btn primary">{t('common.save')}</button>
+          <button type="button" className="btn" onClick={clearForm}>{t('common.clear')}</button>
           <span className="dim">{status}</span>
         </div>
       </form>

@@ -1,16 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Shield, ShieldCheck, ShieldAlert, type LucideIcon } from 'lucide-react';
 import { useSessionStore, useActiveRuntime } from '../../store/session';
+import { useT } from '../../i18n';
 
 // Sandbox mode picker (dsh sandbox-policy vocabulary). Confined modes
 // fence file mutations to the workspace; bash needs a runner backend.
-const MODES: { value: string; label: string; desc: string; icon: LucideIcon }[] = [
-  { value: 'read-only', label: '只读', desc: '禁止一切文件修改', icon: ShieldAlert },
-  { value: 'workspace-write', label: '工作区可写', desc: '仅工作区与临时目录可写', icon: ShieldCheck },
-  { value: 'danger-full-access', label: '不限制', desc: '文件修改不受沙箱限制', icon: Shield },
-];
+// Labels/descriptions resolve per call so a language switch re-renders.
+function modes(t: ReturnType<typeof useT>): { value: string; label: string; desc: string; icon: LucideIcon }[] {
+  return [
+    { value: 'read-only', label: t('sandbox.readOnlyLabel'), desc: t('sandbox.readOnlyDesc'), icon: ShieldAlert },
+    { value: 'workspace-write', label: t('sandbox.workspaceLabel'), desc: t('sandbox.workspaceDesc'), icon: ShieldCheck },
+    { value: 'danger-full-access', label: t('sandbox.fullLabel'), desc: t('sandbox.fullDesc'), icon: Shield },
+  ];
+}
 
 export default function SandboxPicker() {
+  const t = useT();
   const rt = useActiveRuntime();
   const sandbox = rt.sandbox;
   const setSandbox = useSessionStore(s => s.setSandbox);
@@ -32,6 +37,7 @@ export default function SandboxPicker() {
     if (running) setOpen(false);
   }, [running]);
 
+  const MODES = modes(t);
   const current = MODES.find(m => m.value === sandbox) ?? MODES[2];
   const confined = sandbox !== 'danger-full-access';
   const Icon = current.icon;
@@ -42,10 +48,10 @@ export default function SandboxPicker() {
         className={`chip${confined ? ' active' : ''}`}
         onClick={() => setOpen(o => !o)}
         disabled={running}
-        title={running ? '运行中无法切换沙箱' : `沙箱:${current.label} — ${current.desc}`}
+        title={running ? t('sandbox.runningNoSwitch') : t('sandbox.tooltip', { label: current.label, desc: current.desc })}
       >
         <Icon size={14} />
-        沙箱·{current.label}
+        {t('sandbox.button', { label: current.label })}
         <ChevronDown size={13} />
       </button>
       {open && (

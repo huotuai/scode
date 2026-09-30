@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus, ImagePlus, ListTodo, Shrink, Loader2 } from 'lucide-react';
 import { useSessionStore, useActiveRuntime } from '../../store/session';
+import { useT } from '../../i18n';
 
 // "+" menu at the left of the model picker: secondary composer actions
 // (image attachments, plan mode, context compaction) grouped into one
 // upward popup so the bar stays compact.
 export default function PlusMenu({ onFiles }: { onFiles: (files: File[]) => void }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -42,7 +44,7 @@ export default function PlusMenu({ onFiles }: { onFiles: (files: File[]) => void
       <button
         className={`icon-btn plus-btn${open ? ' active' : ''}`}
         onClick={() => setOpen(o => !o)}
-        title="图片 / Plan / 压缩上下文"
+        title={t('plusMenu.title')}
       >
         <Plus size={16} />
       </button>
@@ -56,8 +58,8 @@ export default function PlusMenu({ onFiles }: { onFiles: (files: File[]) => void
             }}
           >
             <ImagePlus size={13} />
-            添加图片
-            <span className="plus-hint">或 Ctrl+V 粘贴</span>
+            {t('plusMenu.addImage')}
+            <span className="plus-hint">{t('plusMenu.pasteHint')}</span>
           </button>
           <button
             className={`model-option${mode === 'plan' ? ' active' : ''}`}
@@ -68,8 +70,8 @@ export default function PlusMenu({ onFiles }: { onFiles: (files: File[]) => void
             }}
           >
             <ListTodo size={13} />
-            Plan 模式
-            {mode === 'plan' && <span className="plus-hint">已开启</span>}
+            {t('plusMenu.planMode')}
+            {mode === 'plan' && <span className="plus-hint">{t('plusMenu.planOn')}</span>}
           </button>
           <button
             className="model-option"
@@ -80,7 +82,7 @@ export default function PlusMenu({ onFiles }: { onFiles: (files: File[]) => void
             }}
           >
             {compacting ? <Loader2 size={13} className="spin" /> : <Shrink size={13} />}
-            {compacting ? '压缩中…' : '压缩上下文'}
+            {compacting ? t('plusMenu.compacting') : t('plusMenu.compact')}
           </button>
         </div>
       )}

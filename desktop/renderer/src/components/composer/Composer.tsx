@@ -5,6 +5,7 @@ import { useChatStore, DRAFT_KEY } from '../../store/chat';
 import ModelPicker from './ModelPicker';
 import SandboxPicker from './SandboxPicker';
 import PlusMenu from './PlusMenu';
+import { useT } from '../../i18n';
 import '../../styles/composer.css';
 
 // One staged attachment: the data URL serves both as the thumbnail src
@@ -30,6 +31,7 @@ function readAsDataUrl(file: File): Promise<string> {
 }
 
 export default function Composer() {
+  const t = useT();
   const [text, setText] = useState('');
   const [images, setImages] = useState<PendingImage[]>([]);
   // Mirror of `images` for async addFiles loops (state closures go stale
@@ -62,11 +64,11 @@ export default function Composer() {
     for (const f of files) {
       if (!f.type.startsWith('image/')) continue;
       if (imagesRef.current.length >= MAX_IMAGES) {
-        note(`最多附加 ${MAX_IMAGES} 张图片`);
+        note(t('composer.tooManyImages', { max: MAX_IMAGES }));
         break;
       }
       if (f.size > MAX_IMAGE_BYTES) {
-        note(`图片过大(>${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)}MB):${f.name || '剪贴板图片'}`);
+        note(t('composer.imageTooBig', { mb: Math.round(MAX_IMAGE_BYTES / 1024 / 1024), name: f.name || t('composer.clipboardImage') }));
         continue;
       }
       try {
@@ -75,7 +77,7 @@ export default function Composer() {
           cur.length >= MAX_IMAGES ? cur : [...cur, { id: nextImgId.current++, dataUrl }],
         );
       } catch {
-        note('图片读取失败');
+        note(t('composer.imageReadFail'));
       }
     }
   };
@@ -124,11 +126,11 @@ export default function Composer() {
           <div className="composer-images">
             {images.map(img => (
               <div className="composer-image" key={img.id}>
-                <img src={img.dataUrl} alt="待发送图片" />
+                <img src={img.dataUrl} alt={t('composer.imageAlt')} />
                 <button
                   className="composer-image-remove"
                   onClick={() => setImgs(cur => cur.filter(i => i.id !== img.id))}
-                  title="移除图片"
+                  title={t('composer.removeImage')}
                 >
                   <X size={11} />
                 </button>
@@ -143,9 +145,7 @@ export default function Composer() {
           onPaste={onPaste}
           rows={2}
           placeholder={
-            running
-              ? '运行中…输入内容发送=插话纠偏'
-              : '输入任务…(Enter 发送,Shift+Enter 换行,Ctrl+V 粘贴图片)'
+            running ? t('composer.placeholderRunning') : t('composer.placeholderIdle')
           }
         />
         <div className="composer-bar">
@@ -154,7 +154,7 @@ export default function Composer() {
           <SandboxPicker />
           <span className="spacer" />
           {running && (
-            <button className="icon-btn stop-btn" onClick={cancel} title="停止当前运行">
+            <button className="icon-btn stop-btn" onClick={cancel} title={t('composer.stop')}>
               <Square size={13} fill="currentColor" />
             </button>
           )}
@@ -162,7 +162,7 @@ export default function Composer() {
             className="send-btn"
             onClick={doSend}
             disabled={!canSend || compacting}
-            title={compacting ? '正在压缩上下文…' : running ? '插话纠偏' : '发送(Enter)'}
+            title={compacting ? t('composer.compactingTitle') : running ? t('composer.steer') : t('composer.send')}
           >
             <ArrowUp size={16} />
           </button>

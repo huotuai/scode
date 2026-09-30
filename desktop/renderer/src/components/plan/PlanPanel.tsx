@@ -1,6 +1,7 @@
 import { CheckCircle2, Circle, ListTodo, Loader2, RefreshCw, X } from 'lucide-react';
 import type { PlanItem } from '../../types';
 import { usePlanStore, planProgress } from '../../store/plan';
+import { useT } from '../../i18n';
 import '../../styles/plan.css';
 
 function itemIcon(i: PlanItem) {
@@ -9,18 +10,19 @@ function itemIcon(i: PlanItem) {
   return <Circle size={13} />;
 }
 
-function itemLabel(i: PlanItem): string {
+function itemLabel(t: ReturnType<typeof useT>, i: PlanItem): string {
   switch (i.status) {
     case 'completed':
-      return '已完成';
+      return t('plan.done');
     case 'in_progress':
-      return '进行中';
+      return t('plan.inProgress');
     default:
-      return '待办';
+      return t('plan.pending');
   }
 }
 
 export default function PlanPanel() {
+  const t = useT();
   const open = usePlanStore(s => s.open);
   const plan = usePlanStore(s => s.plan);
   const error = usePlanStore(s => s.error);
@@ -35,17 +37,17 @@ export default function PlanPanel() {
     <div className="plan-panel">
       <div className="plan-panel-head">
         <ListTodo size={14} />
-        <span className="plan-panel-title">计划进度</span>
+        <span className="plan-panel-title">{t('plan.title')}</span>
         {total > 0 && (
           <span className={`plan-count ${done === total ? 'done' : ''}`}>
-            {done}/{total} 已完成
+            {t('plan.doneCount', { done, total })}
           </span>
         )}
         <span className="spacer" />
-        <button className="plan-icon-btn" title="刷新" onClick={() => void refresh()}>
+        <button className="plan-icon-btn" title={t('common.refresh')} onClick={() => void refresh()}>
           <RefreshCw size={13} />
         </button>
-        <button className="plan-icon-btn" title="关闭" onClick={() => setOpen(false)}>
+        <button className="plan-icon-btn" title={t('common.close')} onClick={() => setOpen(false)}>
           <X size={13} />
         </button>
       </div>
@@ -60,7 +62,7 @@ export default function PlanPanel() {
 
       {total === 0 ? (
         <div className="plan-empty">
-          当前会话还没有计划。多步任务中 Agent 会通过 update_plan 汇报进度,并随会话持久化。
+          {t('plan.empty')}
         </div>
       ) : (
         <>
@@ -68,11 +70,11 @@ export default function PlanPanel() {
           <ul className="plan-list">
             {plan!.items.map((item, idx) => (
               <li key={idx} className={`plan-item ${item.status}`}>
-                <span className="plan-state" title={itemLabel(item)}>
+                <span className="plan-state" title={itemLabel(t, item)}>
                   {itemIcon(item)}
                 </span>
                 <span className="plan-step">{item.step}</span>
-                <span className="plan-state-label">{itemLabel(item)}</span>
+                <span className="plan-state-label">{itemLabel(t, item)}</span>
               </li>
             ))}
           </ul>
@@ -85,6 +87,7 @@ export default function PlanPanel() {
 /** PlanButton is the TopBar trigger: the done/total badge keeps progress
  *  visible even with the panel closed. */
 export function PlanButton() {
+  const t = useT();
   const plan = usePlanStore(s => s.plan);
   const toggle = usePlanStore(s => s.toggle);
   const { done, total } = planProgress(plan);
@@ -92,7 +95,7 @@ export function PlanButton() {
   return (
     <button
       className={`plan-btn ${total > 0 ? 'has-plan' : ''} ${active ? 'active' : ''}`}
-      title={total > 0 ? `计划进度:${done}/${total} 已完成` : '计划进度'}
+      title={total > 0 ? t('plan.buttonTooltip', { done, total }) : t('plan.title')}
       onClick={toggle}
     >
       <ListTodo size={14} />

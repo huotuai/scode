@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, Monitor, Moon, Sun } from 'lucide-react';
 import { useUiStore, type CodeTheme, type Theme } from '../../store/ui';
+import { useI18n, useT, type Lang } from '../../i18n';
 
 // Appearance settings (设置 → 外观): every option applies immediately and
 // persists to localStorage via the ui store — there is no dirty/save flow
@@ -126,11 +127,16 @@ function NumberField({
   );
 }
 
-const THEME_OPTIONS: Option<Theme>[] = [
-  { value: 'light', label: '浅色', icon: <Sun size={13} /> },
-  { value: 'dark', label: '深色', icon: <Moon size={13} /> },
-  { value: 'system', label: '跟随系统', icon: <Monitor size={13} /> },
-];
+// Options resolve per render so a language switch re-labels them.
+function themeOptions(t: ReturnType<typeof useT>): Option<Theme>[] {
+  return [
+    { value: 'light', label: t('appearance.light'), icon: <Sun size={13} /> },
+    { value: 'dark', label: t('appearance.dark'), icon: <Moon size={13} /> },
+    { value: 'system', label: t('appearance.system'), icon: <Monitor size={13} /> },
+  ];
+}
+
+type LangChoice = Lang | 'system';
 
 const LIGHT_CODE_OPTIONS: Option<CodeTheme>[] = [
   { value: 'github', label: 'GitHub Light' },
@@ -142,42 +148,63 @@ const DARK_CODE_OPTIONS: Option<CodeTheme>[] = [
 ];
 
 export default function AppearanceSettings() {
+  const t = useT();
   const s = useUiStore();
+  const lang = useI18n(st => st.lang);
+  const setLang = useI18n(st => st.setLang);
+  // The select shows the OVERRIDE when one is persisted, else 'system'.
+  const langOverride = (() => {
+    try {
+      const v = localStorage.getItem('scode-lang');
+      return v === 'zh' || v === 'en' ? (v as LangChoice) : 'system';
+    } catch {
+      return 'system';
+    }
+  })();
+  const langOptions: Option<LangChoice>[] = [
+    { value: 'system', label: t('appearance.system') },
+    { value: 'zh', label: t('appearance.langZh') },
+    { value: 'en', label: t('appearance.langEn') },
+  ];
+  void lang; // the selector above subscribes for re-render
   return (
     <div className="appr">
       <div className="appr-card">
-        <Row title="界面主题" desc="选择浅色、深色或跟随系统主题。">
-          <Select value={s.theme} options={THEME_OPTIONS} onChange={s.setTheme} />
+        <Row title={t('appearance.themeRow')} desc={t('appearance.themeDesc')}>
+          <Select value={s.theme} options={themeOptions(t)} onChange={s.setTheme} />
         </Row>
-        <Row title="界面字号" desc="调整应用界面的文字大小,图标和布局尺寸不受影响。">
+        <Row title={t('appearance.langRow')} desc={t('appearance.langDesc')}>
+          <Select value={langOverride} options={langOptions} onChange={setLang} />
+        </Row>
+        <Row title={t('appearance.fontRow')} desc={t('appearance.fontDesc')}>
           <NumberField value={s.uiFontSize} onCommit={s.setUiFontSize} />
         </Row>
       </div>
 
-      <div className="appr-group-title">代码设置</div>
-      <div className="appr-group-desc">设置代码内容的主题、字号和显示方式,不受界面字号影响。</div>
+      <div className="appr-group-title">{t('appearance.codeGroup')}</div>
+      <div className="appr-group-desc">{t('appearance.codeGroupDesc')}</div>
       <div className="appr-card">
-        <Row title="浅色代码主题" desc="浅色界面下代码内容使用的高亮主题。">
+        <Row title={t('appearance.lightCode')} desc={t('appearance.lightCodeDesc')}>
           <Select
             value={s.codeThemeLight}
             options={LIGHT_CODE_OPTIONS}
             onChange={s.setCodeThemeLight}
           />
         </Row>
-        <Row title="深色代码主题" desc="深色界面下代码内容使用的高亮主题。">
+        <Row title={t('appearance.darkCode')} desc={t('appearance.darkCodeDesc')}>
           <Select
             value={s.codeThemeDark}
             options={DARK_CODE_OPTIONS}
             onChange={s.setCodeThemeDark}
           />
         </Row>
-        <Row title="显示行号" desc="在代码内容和差异视图中显示行号。">
+        <Row title={t('appearance.lineNumbers')} desc={t('appearance.lineNumbersDesc')}>
           <Switch checked={s.codeLineNumbers} onChange={s.setCodeLineNumbers} />
         </Row>
-        <Row title="长行自动换行" desc="代码内容过长时自动换行。">
+        <Row title={t('appearance.wrap')} desc={t('appearance.wrapDesc')}>
           <Switch checked={s.codeWordWrap} onChange={s.setCodeWordWrap} />
         </Row>
-        <Row title="代码字号" desc="调整代码块、文件预览和差异视图的默认字号。">
+        <Row title={t('appearance.codeFontSize')} desc={t('appearance.codeFontSizeDesc')}>
           <NumberField value={s.codeFontSize} onCommit={s.setCodeFontSize} />
         </Row>
       </div>

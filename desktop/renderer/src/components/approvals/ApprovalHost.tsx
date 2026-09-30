@@ -3,6 +3,7 @@ import { ShieldAlert, ClipboardCheck, Check, Ban, Shield } from 'lucide-react';
 import type { ApprovalRequest } from '../../types';
 import { answerApproval } from '../../lib/rpc';
 import { useSessionStore, useActiveRuntime, patchRuntime } from '../../store/session';
+import { useT } from '../../i18n';
 import '../../styles/approvals.css';
 
 // Approval cards take the composer's place while a request is pending
@@ -30,6 +31,7 @@ export default function ApprovalHost() {
 }
 
 function PlanApproval({ req }: { req: ApprovalRequest }) {
+  const t = useT();
   const dropApproval = useSessionStore(s => s.dropApproval);
   const [feedback, setFeedback] = useState('');
 
@@ -44,25 +46,25 @@ function PlanApproval({ req }: { req: ApprovalRequest }) {
         <span className="approval-icon">
           <ClipboardCheck size={15} />
         </span>
-        计划评审
+        {t('approval.planTitle')}
       </div>
       <pre className="approval-plan">{req.params.plan}</pre>
       <div className="approval-row">
         <button className="btn primary" onClick={() => answer('approve')}>
           <Check size={13} />
-          批准并执行
+          {t('approval.approveRun')}
         </button>
         <input
           value={feedback}
           onChange={e => setFeedback(e.target.value)}
-          placeholder="驳回并附反馈(直接回车=无理由打回)"
+          placeholder={t('approval.rejectPlaceholder')}
           onKeyDown={e => {
             if (e.key === 'Enter') answer('revise');
           }}
         />
         <button className="btn danger-ghost" onClick={() => answer('revise')}>
           <Ban size={13} />
-          驳回
+          {t('approval.reject')}
         </button>
       </div>
     </div>
@@ -70,8 +72,10 @@ function PlanApproval({ req }: { req: ApprovalRequest }) {
 }
 
 // Sandbox escalation: the model asks to widen this call's file scope.
-// 批准一次 = this call only; 本会话生效 = switch the session's standing mode.
+// approve-once = this call only; apply-to-session = switch the session's
+// standing mode.
 function SandboxApproval({ req }: { req: ApprovalRequest }) {
+  const t = useT();
   const dropApproval = useSessionStore(s => s.dropApproval);
   const { tool, detail, currentMode, requestedMode, justification } = req.params;
 
@@ -93,19 +97,19 @@ function SandboxApproval({ req }: { req: ApprovalRequest }) {
         <span className="approval-icon">
           <Shield size={15} />
         </span>
-        沙箱升权:{currentMode} → {requestedMode}
+        {t('approval.sandboxTitle', { current: currentMode ?? '', requested: requestedMode ?? '' })}
       </div>
       <div className="approval-detail">{tool}  {detail}</div>
-      {justification && <div className="approval-justification">理由:{justification}</div>}
+      {justification && <div className="approval-justification">{t('approval.reason', { text: justification })}</div>}
       <div className="approval-row">
         <button className="btn primary" onClick={() => answer('allow')}>
-          批准一次
+          {t('approval.approveOnce')}
         </button>
         <button className="btn" onClick={() => answer('allow_session')}>
-          本会话生效
+          {t('approval.applySession')}
         </button>
         <button className="btn danger-ghost" onClick={() => answer('deny')}>
-          拒绝
+          {t('approval.deny')}
         </button>
       </div>
     </div>
@@ -113,6 +117,7 @@ function SandboxApproval({ req }: { req: ApprovalRequest }) {
 }
 
 function PermissionApproval({ req }: { req: ApprovalRequest }) {
+  const t = useT();
   const dropApproval = useSessionStore(s => s.dropApproval);
   const { rule, tool, argKind, argValue } = req.params;
   const detail = `${tool ?? ''}  ${argKind ? argKind + ': ' : ''}${argValue ?? ''}`;
@@ -128,21 +133,21 @@ function PermissionApproval({ req }: { req: ApprovalRequest }) {
         <span className="approval-icon">
           <ShieldAlert size={15} />
         </span>
-        审批:{rule}
+        {t('approval.toolTitle', { rule: rule ?? '' })}
       </div>
       <div className="approval-detail">{detail}</div>
       <div className="approval-row">
         <button className="btn primary" onClick={() => answer('allow')}>
-          允许一次
+          {t('approval.allowOnce')}
         </button>
         <button className="btn danger-ghost" onClick={() => answer('deny')}>
-          拒绝
+          {t('approval.deny')}
         </button>
         <button className="btn" onClick={() => answer('allow_session')}>
-          本会话总是
+          {t('approval.allowSession')}
         </button>
         <button className="btn" onClick={() => answer('allow_project')}>
-          本项目总是
+          {t('approval.allowProject')}
         </button>
       </div>
     </div>

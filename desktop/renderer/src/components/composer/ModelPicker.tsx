@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Cpu, Settings2 } from 'lucide-react';
 import { useActiveRuntime } from '../../store/session';
-import { useModelsStore, THINKING_LABELS } from '../../store/models';
+import { useModelsStore } from '../../store/models';
+import { useT, thinkingLabel } from '../../i18n';
 import { useUiStore } from '../../store/ui';
 
 type ModelChoice = { label: string; provider: string; model: string; reasoning?: boolean };
@@ -11,6 +12,7 @@ type ModelChoice = { label: string; provider: string; model: string; reasoning?:
 // dialog's models page. Choices carry provider/model directly — the old
 // label-splitting broke on ids containing " / ".
 export default function ModelPicker() {
+  const t = useT();
   const rt = useActiveRuntime();
   const provider = rt.provider;
   const model = rt.model;
@@ -43,7 +45,7 @@ export default function ModelPicker() {
   // session is created (on first use) and reports its resolved model.
   const effProvider = provider || defaultChoice.provider;
   const effModel = model || defaultChoice.model;
-  const label = effProvider && effModel ? `${effProvider} / ${effModel}` : effModel || '选择模型';
+  const label = effProvider && effModel ? `${effProvider} / ${effModel}` : effModel || t('modelPicker.selectModel');
 
   // Reasoning capability of the model in view: a listed model without
   // the reasoning flag hides the effort controls; unknown models stay
@@ -51,7 +53,7 @@ export default function ModelPicker() {
   const entry = models.find(m => m.provider === effProvider && m.model === effModel);
   const reasoningCapable = entry ? entry.reasoning !== false : true;
   const chipLabel =
-    reasoningCapable && thinking ? `${label} · ${THINKING_LABELS[thinking] ?? thinking}` : label;
+    reasoningCapable && thinking ? `${label} · ${thinkingLabel(thinking)}` : label;
 
   const isCurrent = (m: ModelChoice) => m.provider === provider && m.model === model;
 
@@ -73,7 +75,7 @@ export default function ModelPicker() {
         className="chip model-chip"
         onClick={() => setOpen(o => !o)}
         disabled={running}
-        title={running ? '运行中无法切换模型' : '切换模型 / 推理强度'}
+        title={running ? t('modelPicker.runningNoSwitch') : t('modelPicker.switchTitle')}
       >
         <Cpu size={14} />
         <span className="model-label">{chipLabel}</span>
@@ -81,7 +83,7 @@ export default function ModelPicker() {
       </button>
       {open && (
         <div className="model-menu">
-          {models.length === 0 && <div className="model-empty dim">暂无已配置模型</div>}
+          {models.length === 0 && <div className="model-empty dim">{t('modelPicker.empty')}</div>}
           {models.map(m => (
             <button
               key={`${m.provider}\u0000${m.model}`}
@@ -93,9 +95,9 @@ export default function ModelPicker() {
           ))}
           <div
             className="model-levels"
-            title={reasoningCapable ? undefined : '当前模型未标记为支持推理'}
+            title={reasoningCapable ? undefined : t('modelPicker.notReasoning')}
           >
-            <div className="model-levels-title">推理强度</div>
+            <div className="model-levels-title">{t('modelPicker.levelsTitle')}</div>
             <div className="model-levels-row">
               {(['', 'off', 'low', 'medium', 'high'] as const).map(lv => (
                 <button
@@ -104,7 +106,7 @@ export default function ModelPicker() {
                   disabled={running || !reasoningCapable}
                   onClick={() => pickLevel(lv)}
                 >
-                  {THINKING_LABELS[lv]}
+                  {thinkingLabel(lv)}
                 </button>
               ))}
             </div>
@@ -117,7 +119,7 @@ export default function ModelPicker() {
             }}
           >
             <Settings2 size={13} />
-            管理模型…
+            {t('modelPicker.manage')}
           </button>
         </div>
       )}

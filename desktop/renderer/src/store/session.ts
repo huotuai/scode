@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { t } from '../i18n';
 import type {
   ApprovalRequest,
   CompactResult,
@@ -168,7 +169,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
         // history list free of empty sessions.
         await get().refreshSessions();
       } catch (err) {
-        chat().addError(activeKey(), `启动失败:${errText(err)}`);
+        chat().addError(activeKey(), t('store.startFail', { err: errText(err) }));
       } finally {
         set({ booting: false });
       }
@@ -248,7 +249,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
         chat().loadTranscript(id, tr.messages);
         await get().refreshUsage(id);
       } catch (err) {
-        chat().addError(activeKey(), `恢复会话失败:${errText(err)}`);
+        chat().addError(activeKey(), t('store.resumeFail', { err: errText(err) }));
       }
     },
 
@@ -266,10 +267,10 @@ export const useSessionStore = create<SessionState>((set, get) => {
         get().refreshSessions();
         chat().addNote(
           r.sessionId,
-          tailTurns ? `已从会话 ${id.slice(0, 8)} 的该轮分叉` : `已从会话 ${id.slice(0, 8)} 分叉`,
+          tailTurns ? t('store.forkedTurn', { id: id.slice(0, 8) }) : t('store.forked', { id: id.slice(0, 8) }),
         );
       } catch (err) {
-        chat().addError(get().sessionId ?? DRAFT_KEY, `分叉失败:${errText(err)}`);
+        chat().addError(get().sessionId ?? DRAFT_KEY, t('store.forkFail', { err: errText(err) }));
       }
     },
 
@@ -302,7 +303,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
         if (get().sessionId === id) get().newSession(); // back to draft
         await get().refreshSessions();
       } catch (err) {
-        chat().addError(activeKey(), `删除会话失败:${errText(err)}`);
+        chat().addError(activeKey(), t('store.deleteFail', { err: errText(err) }));
       }
     },
 
@@ -312,7 +313,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
         await get().refreshSessions();
         return r.deleted;
       } catch (err) {
-        chat().addError(activeKey(), `清理失败:${errText(err)}`);
+        chat().addError(activeKey(), t('store.pruneFail', { err: errText(err) }));
         return 0;
       }
     },
@@ -341,7 +342,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
         // would be silently dropped, so refuse and let the composer
         // restore the draft.
         if (dataUrls.length > 0) {
-          chat().addNote(cur, '运行中暂不支持发送图片，请等待运行结束或停止后再发送');
+          chat().addNote(cur, t('store.imageWhileRunning'));
           return false;
         }
         chat().addSteer(cur, text);
@@ -360,7 +361,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
         // Setup failures (e.g. defaultProvider naming a missing profile)
         // surface here instead of at boot. The text was NOT echoed, so the
         // composer restores it for a retry.
-        chat().addError(activeKey(), `创建会话失败:${errText(err)}`);
+        chat().addError(activeKey(), t('store.createFail', { err: errText(err) }));
         return false;
       }
       chat().addUser(sessionId, text, dataUrls);
@@ -403,7 +404,7 @@ export const useSessionStore = create<SessionState>((set, get) => {
         patch(sessionId, { mode: r.mode });
         chat().addNote(
           sessionId,
-          r.mode === 'plan' ? '已进入计划模式(只读调研,计划评审后执行)' : '已退出计划模式',
+          r.mode === 'plan' ? t('store.planOn') : t('store.planOff'),
         );
       } catch (err) {
         chat().addError(sessionId, errText(err));
@@ -424,10 +425,10 @@ export const useSessionStore = create<SessionState>((set, get) => {
         chat().addNote(
           sessionId,
           r.sandbox === 'danger-full-access'
-            ? '沙箱已关闭(不限制文件修改)'
+            ? t('store.sandboxOff')
             : r.sandbox === 'workspace-write'
-              ? '沙箱:仅工作区可写'
-              : '沙箱:只读(禁止文件修改)',
+              ? t('store.sandboxWorkspace')
+              : t('store.sandboxReadOnly'),
         );
       } catch (err) {
         chat().addError(sessionId, errText(err));
@@ -441,16 +442,16 @@ export const useSessionStore = create<SessionState>((set, get) => {
       try {
         const r = await rpc<CompactResult>('session/compact', { sessionId });
         if (r.ok === false) {
-          chat().addNote(sessionId, '历史很短,无需压缩');
+          chat().addNote(sessionId, t('store.nothingToCompact'));
         } else {
           const detail =
             r.tokensBefore !== undefined && r.tokensAfter !== undefined
               ? `(${fmtTok(r.tokensBefore)} → ${fmtTok(r.tokensAfter)} tokens)`
               : '';
-          chat().addNote(sessionId, `上下文已压缩${detail}`);
+          chat().addNote(sessionId, t('store.compacted', { detail }));
         }
       } catch (err) {
-        chat().addNote(sessionId, `压缩失败:${errText(err)}`);
+        chat().addNote(sessionId, t('store.compactFail', { err: errText(err) }));
       } finally {
         patch(sessionId, { compacting: false });
       }
