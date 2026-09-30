@@ -671,6 +671,7 @@ type TUIConfig struct {
 	MemoryAutoExtract bool
 	RewindCheckpoints bool
 	ClipboardWatch    bool
+	Language          string // "" = system (auto-detect)
 }
 
 // TUIConfig reads the panel state from the freshest settings (falls
@@ -692,6 +693,7 @@ func (a *App) TUIConfig() TUIConfig {
 		MemoryAutoExtract: s.MemoryAutoExtractOn(),
 		RewindCheckpoints: s.RewindCheckpointsOn(),
 		ClipboardWatch:    s.ClipboardWatch == nil || *s.ClipboardWatch,
+		Language:          s.Language,
 	}
 }
 
@@ -737,6 +739,16 @@ func (a *App) SetConfigBool(key string, on bool) error {
 	return config.SetTUIConfigKey(key, on)
 }
 
+// SetLanguage persists the UI language override ("" deletes the key =
+// system auto-detect). The TUI applies it live via i18n.Set.
+func (a *App) SetLanguage(lang string) error {
+	var v any
+	if lang != "" {
+		v = lang
+	}
+	return config.SetTUIConfigKey("language", v)
+}
+
 // ConfigListText renders the /config listing (REPL surface).
 func (a *App) ConfigListText() string {
 	c := a.TUIConfig()
@@ -753,7 +765,22 @@ func (a *App) ConfigListText() string {
 	return i18n.Tf("cli.run.configList",
 		onOff(c.AutoCompact), ret, onOff(c.AutoMemory), onOff(c.TypedMemory),
 		onOff(c.MemoryRelevance), onOff(c.MemoryAutoExtract), onOff(c.RewindCheckpoints),
-		onOff(c.ClipboardWatch))
+		onOff(c.ClipboardWatch), LanguageLabel(c.Language))
+}
+
+// LanguageLabel renders the language setting for the /config surfaces:
+// an explicit override by name, "system (<detected>)" when unset.
+func LanguageLabel(lang string) string {
+	langName := func(l i18n.Lang) string {
+		if l == i18n.Zh {
+			return i18n.T("tui.config.langZh")
+		}
+		return i18n.T("tui.config.langEn")
+	}
+	if l, ok := i18n.Parse(lang); ok {
+		return langName(l)
+	}
+	return i18n.Tf("tui.config.langAuto", langName(i18n.Auto()))
 }
 
 // planDelta builds the transcript system message carrying the plan

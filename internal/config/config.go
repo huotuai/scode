@@ -58,6 +58,7 @@ type Settings struct {
 	ClipboardWatch       *bool                     `json:"clipboardWatch,omitempty"`       // TUI: auto-attach clipboard images (terminals that swallow ctrl+v); default true
 	UpdateRepo           string                    `json:"updateRepo,omitempty"`           // GitHub "org/repo" release source for scode update (env SCODE_UPDATE_REPO overrides)
 	UpdateCheck          *bool                     `json:"updateCheck,omitempty"`          // background new-version notice; default on
+	Language             string                    `json:"language,omitempty"`             // UI language: "zh" | "en" ("" = system); SCODE_LANG overrides
 	Providers            map[string]ProviderConfig `json:"providers,omitempty"`
 
 	// /config panel (the basic-configuration surface). Pointer booleans:
@@ -355,12 +356,13 @@ func SetDefault(provider, model string) error {
 }
 
 // tuiConfigKeys are the /config panel's persistable keys (validated so
-// typos cannot smuggle arbitrary keys into settings.json).
+// typos cannot smuggle arbitrary keys into settings.json). Values are
+// bools, ints, or (language) a string; nil deletes the key.
 var tuiConfigKeys = map[string]bool{
 	"autoCompact": true, "logRetentionDays": true,
 	"autoMemory": true, "typedMemory": true, "memoryRelevance": true,
 	"memoryAutoExtraction": true, "rewindCheckpoints": true,
-	"clipboardWatch": true,
+	"clipboardWatch": true, "language": true,
 }
 
 // SetTUIConfigKey persists one /config panel key (bool or int value;

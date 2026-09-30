@@ -132,6 +132,7 @@ TUI 键位：`Enter` 发送，`ctrl+j` 换行；运行中输入自动转为插�
     "deny":  ["write(.git/**)"]
   },
   "sandbox": { "mode": "workspace-write" },  // read-only | workspace-write | danger-full-access
+  "language": "zh",                   // 界面语言：zh | en（缺省跟随系统；SCODE_LANG 环境变量优先）
   "updateCheck": true,                // TUI 启动时的新版本提示（默认开）
   "updateRepo": "huotuai/scode"       // 更新源（默认已内置）
 }

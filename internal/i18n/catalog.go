@@ -515,6 +515,26 @@ var catalog = map[string]Message{
 		En: "alt+v / ctrl+v probe the clipboard once (ctrl+v is often swallowed by Windows terminals; alt+v is reliable); on a miss the watch loops ~15s, attaches a detected image, then stops. Zero calls at idle; disable if your antivirus complains",
 		Zh: "alt+v / ctrl+v 探测一次剪贴板(ctrl+v 常被 Windows 终端拦截,alt+v 更可靠);未读到图片则循环监控约 15 秒,检测到图片自动附加后停止,再次触发重新激活。空闲时零调用,担心杀毒告警可关闭",
 	},
+	"tui.config.language.label": {
+		En: "Interface language",
+		Zh: "界面语言",
+	},
+	"tui.config.language.desc": {
+		En: "UI display language (SCODE_LANG overrides this setting).",
+		Zh: "界面显示语言(SCODE_LANG 环境变量优先于此设置)。",
+	},
+	"tui.config.langAuto": {
+		En: "system (%s)",
+		Zh: "跟随系统(%s)",
+	},
+	"tui.config.langZh": {
+		En: "中文 (Chinese)",
+		Zh: "中文",
+	},
+	"tui.config.langEn": {
+		En: "English",
+		Zh: "English (英文)",
+	},
 
 	// ---- TUI: /sandbox picker ----
 	"tui.sandbox.readOnlyDesc": {
@@ -906,8 +926,8 @@ var catalog = map[string]Message{
 		Zh: "子代理 (%d):\n%s\n模型格式 provider:model(留空继承会话模型)· task 工具委派,子代理只读且完全隔离",
 	},
 	"cli.run.configList": {
-		En: "Configuration (in the TUI, /config opens the interactive panel):\n  Auto-compact context: %s\n  Log retention period: %s\n  Auto Memory: %s\n  Typed Memory: %s\n  Memory Relevance: %s\n  Memory Auto Extraction: %s\n  Rewind code (checkpoint rollback): %s\n  Clipboard image reading (ctrl+v): %s (single read on demand, zero calls at idle; when off the clipboard is never touched)",
-		Zh: "配置 (TUI 里 /config 打开面板交互修改):\n  上下文自动压缩: %s\n  日志清理周期: %s\n  Auto Memory(自动记忆): %s\n  Typed Memory(分类记忆): %s\n  Memory Relevance(记忆相关性选择): %s\n  Memory Auto Extraction(自动提取记忆): %s\n  Rewind code(检查点回滚): %s\n  剪贴板图片读取(ctrl+v): %s (按需单次读取,空闲时零调用;关闭后完全不触剪贴板)",
+		En: "Configuration (in the TUI, /config opens the interactive panel):\n  Auto-compact context: %s\n  Log retention period: %s\n  Auto Memory: %s\n  Typed Memory: %s\n  Memory Relevance: %s\n  Memory Auto Extraction: %s\n  Rewind code (checkpoint rollback): %s\n  Clipboard image reading (ctrl+v): %s (single read on demand, zero calls at idle; when off the clipboard is never touched)\n  Interface language: %s",
+		Zh: "配置 (TUI 里 /config 打开面板交互修改):\n  上下文自动压缩: %s\n  日志清理周期: %s\n  Auto Memory(自动记忆): %s\n  Typed Memory(分类记忆): %s\n  Memory Relevance(记忆相关性选择): %s\n  Memory Auto Extraction(自动提取记忆): %s\n  Rewind code(检查点回滚): %s\n  剪贴板图片读取(ctrl+v): %s (按需单次读取,空闲时零调用;关闭后完全不触剪贴板)\n  界面语言: %s",
 	},
 	"cli.run.mcpState": {
 		En: "%s · %d tools",

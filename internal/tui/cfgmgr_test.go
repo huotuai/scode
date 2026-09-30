@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"scode/internal/i18n"
 )
 
 // The /config panel: toggles persist immediately, auto-compact applies
@@ -85,6 +87,29 @@ func TestConfigPanelFlow(t *testing.T) {
 	if !m.cfgSnapshot.ClipboardWatch || !m.clipWatch {
 		t.Fatalf("clipboard watch re-enable failed: %+v flag=%v", m.cfgSnapshot, m.clipWatch)
 	}
+
+	// Language row (last): cycles system → zh → en → system, persists,
+	// and flips the live display language. Restore the package baseline
+	// (zh, pinned by TestMain) no matter how the cycle ends.
+	baseline := i18n.Current()
+	defer i18n.Set(baseline)
+	m = press(t, m, tea.KeyDown) // → language
+	m = press(t, m, tea.KeyEnter)
+	if m.cfgSnapshot.Language != "zh" || i18n.Current() != i18n.Zh {
+		t.Fatalf("language cycle 1: %q / %v", m.cfgSnapshot.Language, i18n.Current())
+	}
+	m = press(t, m, tea.KeyEnter)
+	if m.cfgSnapshot.Language != "en" || i18n.Current() != i18n.En {
+		t.Fatalf("language cycle 2: %q / %v", m.cfgSnapshot.Language, i18n.Current())
+	}
+	m = press(t, m, tea.KeyEnter) // back to system
+	if m.cfgSnapshot.Language != "" {
+		t.Fatalf("language cycle 3: %q, want system", m.cfgSnapshot.Language)
+	}
+	if again := app.TUIConfig(); again.Language != "" {
+		t.Fatalf("language reset did not persist: %+v", again)
+	}
+	i18n.Set(baseline)
 
 	m = press(t, m, tea.KeyEscape)
 	if m.cfgOpen {

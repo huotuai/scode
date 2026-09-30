@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"scode/internal/cli"
 	"scode/internal/i18n"
 )
 
@@ -37,6 +38,7 @@ func cfgItems() []cfgItem {
 		{id: "memoryAutoExtract", label: i18n.T("tui.config.memoryAutoExtract.label"), desc: i18n.T("tui.config.memoryAutoExtract.desc")},
 		{id: "rewind", label: i18n.T("tui.config.rewind.label"), desc: i18n.T("tui.config.rewind.desc")},
 		{id: "clipWatch", label: i18n.T("tui.config.clipWatch.label"), desc: i18n.T("tui.config.clipWatch.desc")},
+		{id: "language", label: i18n.T("tui.config.language.label"), desc: i18n.T("tui.config.language.desc")},
 	}
 }
 
@@ -95,12 +97,35 @@ func (m model) cfgActivate() (tea.Model, tea.Cmd) {
 			m.clipWatch = next
 			m.cfgSnapshot = m.app.TUIConfig()
 		}
+	case "language":
+		// Cycle system → zh → en → system; applies live (every string
+		// resolves at render time) and persists.
+		next := cfgNextLanguage(m.cfgSnapshot.Language)
+		if err = m.app.SetLanguage(next); err == nil {
+			if l, ok := i18n.Parse(next); ok {
+				i18n.Set(l)
+			} else {
+				i18n.Set(i18n.Auto())
+			}
+			m.cfgSnapshot = m.app.TUIConfig()
+		}
 	}
 	if err != nil {
 		return m, m.showToast("config: " + err.Error())
 	}
 	m.cfgSnapshot = m.app.TUIConfig()
 	return m, nil
+}
+
+// cfgNextLanguage cycles the language override: system → zh → en.
+func cfgNextLanguage(cur string) string {
+	switch cur {
+	case "":
+		return "zh"
+	case "zh":
+		return "en"
+	}
+	return ""
 }
 
 // cfgNextRetention walks the preset cycle, wrapping unknown values
@@ -146,6 +171,8 @@ func (m *model) configView() string {
 			return onOff(c.RewindCheckpoints)
 		case "clipWatch":
 			return onOff(c.ClipboardWatch)
+		case "language":
+			return cli.LanguageLabel(c.Language), false
 		}
 		return "", false
 	}

@@ -37,6 +37,11 @@ func main() {
 	// Remove the <exe>.old a previous `scode update` left behind (the
 	// old image can only be deleted once it is no longer running).
 	update.CleanStale()
+	// settings.json's language applies process-wide unless SCODE_LANG
+	// pinned one (init-time env/OS detection already ran).
+	if s, err := config.LoadSettings(); err == nil {
+		i18n.ApplySettings(s.Language)
+	}
 	// `scode serve`: headless JSON-RPC session service on stdio (the
 	// desktop client's backend; design: docs/design-permission-plan-desktop.md).
 	if len(os.Args) > 1 && os.Args[1] == "serve" {

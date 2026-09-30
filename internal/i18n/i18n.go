@@ -30,6 +30,25 @@ func Current() Lang { return current }
 // Set overrides the display language (settings panels, tests).
 func Set(l Lang) { current = l }
 
+// Parse maps an explicit language value ("zh", "en", "zh-CN") onto a
+// Lang; ok=false for empty/unknown (callers treat that as "system").
+func Parse(s string) (Lang, bool) { return parseLang(s) }
+
+// Auto re-runs environment/OS detection (the "system" choice).
+func Auto() Lang { return detect() }
+
+// ApplySettings honors settings.json's language key at startup. Only
+// SCODE_LANG beats it — the ambient LANG/LC_* variables do not (an
+// explicit user choice outranks inherited locale noise).
+func ApplySettings(lang string) {
+	if _, ok := parseLang(os.Getenv("SCODE_LANG")); ok {
+		return
+	}
+	if l, ok := parseLang(lang); ok {
+		Set(l)
+	}
+}
+
 // Message is one catalog entry in both languages.
 type Message struct{ En, Zh string }
 
