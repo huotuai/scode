@@ -6,12 +6,20 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"scode/internal/i18n"
 )
 
 // newPlanModel returns a model with a pending plan review over a long
-// body (many wrapped lines, far beyond the visible budget).
+// body (many wrapped lines, far beyond the visible budget). Display
+// language is pinned to zh and RESTORED to the package baseline
+// afterwards (TestMain pins zh; leaving En behind would flip later
+// tests' assertions).
 func newPlanModel(t *testing.T) model {
 	t.Helper()
+	prev := i18n.Current()
+	i18n.Set(i18n.Zh)
+	t.Cleanup(func() { i18n.Set(prev) })
 	m := newTestModel()
 	m.width, m.height = 80, 24
 	m.input.Focus() // an unfocused textarea swallows keystrokes
@@ -53,7 +61,7 @@ func TestPlanApprovalWindow(t *testing.T) {
 	if !strings.Contains(view, "计划确认") || !strings.Contains(view, "共") {
 		t.Fatalf("plan box missing chrome:\n%s", view)
 	}
-	for _, b := range planButtons {
+	for _, b := range planButtons() {
 		if !strings.Contains(view, b) {
 			t.Fatalf("button %q missing:\n%s", b, view)
 		}

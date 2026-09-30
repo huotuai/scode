@@ -6,11 +6,10 @@ package tui
 // explicit command), the conversation is untouched.
 
 import (
-	"strconv"
-
 	tea "charm.land/bubbletea/v2"
 
 	"scode/internal/checkpoint"
+	"scode/internal/i18n"
 )
 
 // tooLargeFiles counts the checkpoint's over-cap (unarchived) files.
@@ -78,7 +77,7 @@ func (m model) handleRewindKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.rewindConfirm = false
 		m.rewindRefresh()
-		return m, m.showToast("已回滚到 " + cp.ID + " · 恢复 " + strconv.Itoa(n) + " 个文件")
+		return m, m.showToast(i18n.Tf("tui.rewind.restored", cp.ID, n))
 	}
 	return m, nil // modal: swallow everything else
 }
@@ -86,12 +85,12 @@ func (m model) handleRewindKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m *model) rewindView() string {
 	var rows []string
 	for i, cp := range m.rewindPoints {
-		files := "1 个文件"
+		files := i18n.T("tui.rewind.oneFile")
 		if len(cp.Files) != 1 {
-			files = strconv.Itoa(len(cp.Files)) + " 个文件"
+			files = i18n.Tf("tui.rewind.nFiles", len(cp.Files))
 		}
 		if n := tooLargeFiles(cp); n > 0 {
-			files += "," + strconv.Itoa(n) + " 个过大未留档"
+			files += i18n.Tf("tui.rewind.tooLarge", n)
 		}
 		row := cp.ID + " · " + cp.Time.Format("15:04:05") + " · " + cp.Tool + " · " + cp.Summary + dimStyle.Render(" ("+files+")")
 		if i == m.rewindIdx {
@@ -101,11 +100,11 @@ func (m *model) rewindView() string {
 		}
 	}
 	if len(rows) == 0 {
-		rows = append(rows, dimStyle.Render("  (暂无检查点 — AI 的 edit/write 修改会自动留档)"))
+		rows = append(rows, dimStyle.Render(i18n.T("tui.rewind.empty")))
 	}
-	rows = append(rows, dimStyle.Render("  ↑/↓ 选择 · enter 两次确认恢复 · esc 返回"))
+	rows = append(rows, dimStyle.Render(i18n.T("tui.rewind.hint")))
 	if m.rewindConfirm && m.rewindIdx < len(m.rewindPoints) {
-		rows = append(rows, warnStyle.Render("  再按 enter 把文件回滚到 "+m.rewindPoints[m.rewindIdx].ID+" (对话不受影响)"))
+		rows = append(rows, warnStyle.Render(i18n.Tf("tui.rewind.confirm", m.rewindPoints[m.rewindIdx].ID)))
 	}
-	return m.overlayView("回滚代码 · 检查点", overlayList(rows))
+	return m.overlayView(i18n.T("tui.rewind.title"), overlayList(rows))
 }

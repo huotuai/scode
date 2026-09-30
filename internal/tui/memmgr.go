@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"scode/internal/i18n"
 	"scode/internal/memory"
 )
 
@@ -74,7 +75,7 @@ func (m model) handleMemoryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.memIdx >= len(m.memEntries) && m.memIdx > 0 {
 			m.memIdx--
 		}
-		return m, m.showToast("记忆已删除")
+		return m, m.showToast(i18n.T("tui.memory.deleted"))
 	case "e":
 		m.memExtractAsync()
 		return m, nil
@@ -86,7 +87,7 @@ func (m model) handleMemoryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // model call blocks up to its own timeout); the summary lands as a
 // transcript note through the ui channel.
 func (m *model) memExtractAsync() {
-	m.appendBlock(noteLine("记忆提取中…"))
+	m.appendBlock(noteLine(i18n.T("tui.memory.extracting")))
 	app, ui := m.app, m.ui
 	go func() {
 		summary, err := app.MemoryExtract(context.Background())
@@ -113,11 +114,11 @@ func (m *model) memoryView() string {
 		}
 	}
 	if len(rows) == 0 {
-		rows = append(rows, dimStyle.Render("  (暂无记忆 — e 立即提取,或在 /config 开启会话结束自动提取)"))
+		rows = append(rows, dimStyle.Render(i18n.T("tui.memory.empty")))
 	}
-	rows = append(rows, dimStyle.Render("  ↑/↓ 选择 · s 已选(Relevance 开启时仅注入已选) · d 删除 · e 提取 · esc 关闭"))
+	rows = append(rows, dimStyle.Render(i18n.T("tui.memory.hint")))
 	if m.memConfirmDel && m.memIdx < len(m.memEntries) {
-		rows = append(rows, warnStyle.Render("  再按 d 确认删除"))
+		rows = append(rows, warnStyle.Render(i18n.T("tui.memory.confirmDelete")))
 	}
-	return m.overlayView("长期记忆", overlayList(rows))
+	return m.overlayView(i18n.T("tui.memory.title"), overlayList(rows))
 }

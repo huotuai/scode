@@ -17,6 +17,7 @@ import (
 	"golang.org/x/image/bmp"
 
 	"scode/internal/cli"
+	"scode/internal/i18n"
 	"scode/internal/llm"
 )
 
@@ -25,7 +26,7 @@ import (
 // ctrl+v first probes the OS clipboard for an image: a bitmap (Windows
 // CF_DIBV5/CF_DIB — what Win+Shift+S and PrtScn leave behind), a raw
 // PNG ("PNG" format), or an Explorer-copied image FILE (CF_HDROP). A
-// hit becomes a pending attachment echoed into the input as a [图片#N]
+// hit becomes a pending attachment echoed into the input as a [image#N]
 // placeholder; a miss falls through to the textarea's normal text
 // paste. Deleting the placeholder drops the attachment.
 
@@ -48,7 +49,11 @@ type clipImage struct {
 	size  int       // raw payload bytes, for the notice
 }
 
-func (c clipImage) placeholder() string { return fmt.Sprintf("[图片#%d]", c.id) }
+// placeholder marks the attachment in the composer text. The format is
+// a stable ASCII marker (both render AND parse go through this one
+// function — a localized or per-language marker would desync the
+// strip-on-steer parse).
+func (c clipImage) placeholder() string { return fmt.Sprintf("[image#%d]", c.id) }
 
 // attachImage queues a validated image payload as a pending attachment
 // and echoes its placeholder into the composer. name labels the source
@@ -62,7 +67,7 @@ func (m *model) attachImage(data []byte, name string) bool {
 	c := clipImage{id: m.imgSeq, block: block, size: len(data)}
 	m.clipImgs = append(m.clipImgs, c)
 	m.input.InsertString(c.placeholder())
-	m.appendBlock(dimStyle.Render(fmt.Sprintf("(已附加 %s %s，%d 字节 — 随下条消息发送；删除占位符可取消)", name, c.placeholder(), c.size)))
+	m.appendBlock(dimStyle.Render(i18n.Tf("tui.clip.attached", name, c.placeholder(), c.size)))
 	m.resize()
 	return true
 }
@@ -86,7 +91,7 @@ func (m *model) attachClipboardImage() bool {
 	if err != nil {
 		return false
 	}
-	if !m.attachImage(data, "剪贴板图片") {
+	if !m.attachImage(data, i18n.T("tui.clip.imageName")) {
 		m.appendBlock(errStyle.Render(fmt.Sprintf("clipboard image rejected: not a supported image or over %d bytes (%d bytes)", 10<<20, len(data))))
 		return true
 	}
@@ -139,13 +144,13 @@ func (m *model) onClipLoopTick(msg clipLoopTickMsg) tea.Cmd {
 	}
 	if !time.Now().Before(m.clipLoopUntil) {
 		m.disarmClipLoop()
-		m.appendBlock(dimStyle.Render("(剪贴板监控超时：未检测到图片，按 alt+v / ctrl+v 重新监控)"))
+		m.appendBlock(dimStyle.Render(i18n.T("tui.clip.watchTimeout")))
 		m.resize()
 		return nil
 	}
 	if data, err := clipboardImageFn(); err == nil {
 		m.disarmClipLoop()
-		if !m.attachImage(data, "剪贴板图片") {
+		if !m.attachImage(data, i18n.T("tui.clip.imageName")) {
 			m.appendBlock(errStyle.Render(fmt.Sprintf("clipboard image rejected: not a supported image or over %d bytes (%d bytes)", 10<<20, len(data))))
 		}
 		return nil
@@ -219,7 +224,7 @@ func imageBlocks(kept []clipImage) []llm.Block {
 }
 
 // stripPlaceholders removes attachment placeholders from text (a
-// steered message must not carry literal "[图片#N]" noise).
+// steered message must not carry literal "[image#N]" noise).
 func stripPlaceholders(text string, pending []clipImage) string {
 	for _, c := range pending {
 		text = bytes.NewBuffer(bytes.ReplaceAll([]byte(text), []byte(c.placeholder()), nil)).String()

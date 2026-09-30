@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"scode/internal/config"
+	"scode/internal/i18n"
 	"scode/internal/subagent"
 )
 
@@ -50,9 +51,9 @@ type agentField struct {
 func (f agentForm) fields(models []config.ModelChoice) []agentField {
 	effort := f.effort
 	if effort == "" {
-		effort = "默认"
+		effort = i18n.T("tui.agents.effortDefault")
 	}
-	model := "(继承会话模型)"
+	model := i18n.T("tui.agents.inheritModel")
 	if f.model != "" {
 		model = f.model
 		for _, c := range models {
@@ -62,16 +63,16 @@ func (f agentForm) fields(models []config.ModelChoice) []agentField {
 			}
 		}
 	}
-	nameLabel := "名称"
+	nameLabel := i18n.T("tui.agents.nameLabel")
 	if f.editing != "" {
-		nameLabel = "名称(重命名会新建一条)"
+		nameLabel = i18n.T("tui.agents.nameLabelEdit")
 	}
 	return []agentField{
 		{id: "name", label: nameLabel, kind: agentFieldText, value: f.name},
-		{id: "desc", label: "描述 · 何时委派给它", kind: agentFieldText, value: f.desc},
-		{id: "model", label: "模型(enter 在已激活模型间切换)", kind: agentFieldChoice, value: model},
-		{id: "effort", label: "推理强度", kind: agentFieldChoice, value: effort},
-		{id: "save", label: "[保存并生效]", kind: agentFieldAction},
+		{id: "desc", label: i18n.T("tui.agents.descLabel"), kind: agentFieldText, value: f.desc},
+		{id: "model", label: i18n.T("tui.agents.modelLabel"), kind: agentFieldChoice, value: model},
+		{id: "effort", label: i18n.T("tui.agents.effortLabel"), kind: agentFieldChoice, value: effort},
+		{id: "save", label: i18n.T("tui.agents.saveLabel"), kind: agentFieldAction},
 	}
 }
 
@@ -179,7 +180,7 @@ func (m model) handleAgentsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.agentIsBuiltin(idx) {
 			m.agentsConfirmDel = false
-			return m, m.showToast("内置代理不可删除 — enter 编辑保存后即为自定义覆盖")
+			return m, m.showToast(i18n.T("tui.agents.builtinNoDelete"))
 		}
 		name := m.agentsSpecs[idx].Name
 		if !m.agentsConfirmDel {
@@ -194,7 +195,7 @@ func (m model) handleAgentsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.agentsIdx >= len(m.agentsSpecs) && m.agentsIdx > 0 {
 			m.agentsIdx--
 		}
-		return m, m.showToast("子代理 " + name + " 已删除")
+		return m, m.showToast(i18n.Tf("tui.agents.deleted", name))
 	}
 	return m, nil // modal: swallow everything else
 }
@@ -293,7 +294,7 @@ func (m model) agentCommit() (tea.Model, tea.Cmd) {
 			m.agentsIdx = i
 		}
 	}
-	return m, m.showToast("子代理 " + spec.Name + " 已保存 · 下次委派生效")
+	return m, m.showToast(i18n.Tf("tui.agents.saved", spec.Name))
 }
 
 // agentsView renders the current stage.
@@ -309,15 +310,15 @@ func (m *model) agentsListView() string {
 	for i, s := range m.agentsSpecs {
 		model := s.Model
 		if model == "" {
-			model = "(继承会话模型)"
+			model = i18n.T("tui.agents.inheritModel")
 		}
 		effort := s.Effort
 		if effort == "" {
-			effort = "默认"
+			effort = i18n.T("tui.agents.effortDefault")
 		}
-		row := s.Name + dimStyle.Render(" · "+model+" · 推理 "+effort)
+		row := s.Name + dimStyle.Render(i18n.Tf("tui.agents.row", model, effort))
 		if m.agentIsBuiltin(i) {
-			row += dimStyle.Render(" · 内置")
+			row += dimStyle.Render(i18n.T("tui.agents.builtinMark"))
 		}
 		if s.Description != "" {
 			row += dimStyle.Render(" · " + truncate(s.Description, 40))
@@ -329,21 +330,21 @@ func (m *model) agentsListView() string {
 		}
 	}
 	if len(rows) == 0 {
-		rows = append(rows, dimStyle.Render("  (无子代理 — 按 n 新建)"))
+		rows = append(rows, dimStyle.Render(i18n.T("tui.agents.empty")))
 	}
-	rows = append(rows, dimStyle.Render("  ↑/↓ 选择 · enter 编辑 · n 新建 · d 删除 · esc 关闭"))
+	rows = append(rows, dimStyle.Render(i18n.T("tui.agents.listHint")))
 	if m.agentsConfirmDel && m.agentsIdx < len(m.agentsSpecs) {
-		rows = append(rows, warnStyle.Render("  再按 d 确认删除 "+m.agentsSpecs[m.agentsIdx].Name))
+		rows = append(rows, warnStyle.Render(i18n.Tf("tui.common.confirmDelete", m.agentsSpecs[m.agentsIdx].Name)))
 	}
-	rows = append(rows, dimStyle.Render("  委派:会话中让模型用 task 工具(子代理独立上下文,只读,互不影响)"))
-	return m.overlayView("子代理管理", overlayList(rows))
+	rows = append(rows, dimStyle.Render(i18n.T("tui.agents.delegateNote")))
+	return m.overlayView(i18n.T("tui.agents.title"), overlayList(rows))
 }
 
 func (m *model) agentsEditView() string {
 	f := m.agentForm
-	title := "子代理新建"
+	title := i18n.T("tui.agents.newTitle")
 	if f.editing != "" {
-		title = "子代理编辑: " + f.editing
+		title = i18n.Tf("tui.agents.editTitle", f.editing)
 	}
 	var rows []string
 	for i, field := range f.fields(m.agentModels) {
@@ -352,7 +353,7 @@ func (m *model) agentsEditView() string {
 			row += ": " + field.value
 		}
 		if field.kind == agentFieldChoice {
-			row += dimStyle.Render("  (enter 切换)")
+			row += dimStyle.Render(i18n.T("tui.common.cycleHint"))
 		}
 		if i == m.agentsEditField {
 			rows = append(rows, userStyle.Render("> ")+row)
@@ -360,7 +361,7 @@ func (m *model) agentsEditView() string {
 			rows = append(rows, "  "+row)
 		}
 	}
-	rows = append(rows, dimStyle.Render("  ↑/↓ 字段 · enter 切换选项/保存 · 直接输入文字 · ctrl+u 清空 · esc 返回"))
+	rows = append(rows, dimStyle.Render(i18n.T("tui.common.formHint")))
 	return m.overlayView(title, overlayList(rows))
 }
 

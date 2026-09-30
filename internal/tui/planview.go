@@ -1,9 +1,9 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
+	"scode/internal/i18n"
 	"scode/internal/plantrack"
 	"scode/internal/session"
 )
@@ -29,7 +29,7 @@ func planBlock(plan session.PlanEntry, width int) string {
 			rows = append(rows, gutterPad+dimStyle.Render("○ ")+truncate(it.Step, stepCap))
 		}
 	}
-	head := fmt.Sprintf("计划 %d/%d", done, len(plan.Items))
+	head := i18n.Tf("tui.render.planProgress", done, len(plan.Items))
 	if cur >= 0 {
 		head += " · " + plan.Items[cur].Step
 	}

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"scode/internal/i18n"
 	"scode/internal/llm"
 	"scode/internal/memory"
 )
@@ -52,11 +53,11 @@ func (a *App) memorySection() string {
 // close-time path calls the same core). Returns a human summary.
 func (a *App) MemoryExtract(ctx context.Context) (string, error) {
 	if a.Settings == nil || !a.Settings.AutoMemoryOn() {
-		return "", fmt.Errorf("Auto Memory 已关闭 (/config)")
+		return "", fmt.Errorf("%s", i18n.T("cli.memory.autoOff"))
 	}
 	digest := a.memoryDigest()
 	if digest == "" {
-		return "(会话没有可提取的对话)", nil
+		return i18n.T("cli.memory.nothingToExtract"), nil
 	}
 	entries, err := a.memStore.Load()
 	if err != nil {
@@ -71,7 +72,7 @@ func (a *App) MemoryExtract(ctx context.Context) (string, error) {
 		return "", err
 	}
 	added, updated, deleted := a.applyMemoryOps(out, a.Sess.Header().ID)
-	return fmt.Sprintf("记忆提取完成: 新增 %d · 更新 %d · 删除 %d", added, updated, deleted), nil
+	return i18n.Tf("cli.memory.extracted", added, updated, deleted), nil
 }
 
 // applyMemoryOps parses the model's operation array (fences and stray
@@ -188,16 +189,16 @@ func (a *App) MemoryListText() string {
 		return "error: " + err.Error()
 	}
 	if len(entries) == 0 {
-		return "暂无记忆 — 开启 Memory Auto Extraction (/config) 会在会话结束时自动提取,或 /memory extract 手动触发"
+		return i18n.T("cli.memory.none")
 	}
 	memory.SortEntries(entries)
 	rows := make([]string, 0, len(entries)+1)
 	for _, e := range entries {
 		row := "  [" + memory.CategoryLabel(e.Category) + "] " + e.Content
 		if e.Selected {
-			row += " · 已选"
+			row += i18n.T("cli.memory.selectedMark")
 		}
 		rows = append(rows, row)
 	}
-	return fmt.Sprintf("记忆 (%d):\n%s\n开启 Memory Relevance 后仅注入“已选”条目 · TUI 里 /memory 管理", len(entries), strings.Join(rows, "\n"))
+	return i18n.Tf("cli.memory.list", len(entries), strings.Join(rows, "\n"))
 }

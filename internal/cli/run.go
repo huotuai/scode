@@ -19,6 +19,7 @@ import (
 	"scode/internal/agent"
 	"scode/internal/checkpoint"
 	"scode/internal/config"
+	"scode/internal/i18n"
 	"scode/internal/llm"
 	"scode/internal/mcp"
 	"scode/internal/memory"
@@ -480,7 +481,7 @@ func Setup(opts Options) (*App, error) {
 	// launch (the live session is never a candidate).
 	if days := settings.LogRetentionDays; days > 0 {
 		if n := store.PruneOlderThan(days, a.Sess.Path); n > 0 {
-			fmt.Fprintf(os.Stderr, "sessions: 已清理 %d 个超过 %d 天的会话日志\n", n, days)
+			fmt.Fprintf(os.Stderr, "%s", i18n.Tf("cli.run.pruned", n, days))
 		}
 	}
 
@@ -641,24 +642,23 @@ func (a *App) AgentListText() string {
 	for _, s := range merged {
 		model := s.Model
 		if model == "" {
-			model = "(继承会话模型)"
+			model = i18n.T("tui.agents.inheritModel")
 		}
 		effort := s.Effort
 		if effort == "" {
-			effort = "默认"
+			effort = i18n.T("tui.agents.effortDefault")
 		}
 		name := s.Name
 		if subagent.IsBuiltin(s.Name) && !userNames[s.Name] {
-			name += " (内置)"
+			name += i18n.T("cli.run.builtinMark")
 		}
-		row := fmt.Sprintf("  %s · %s · 推理 %s", name, model, effort)
+		row := i18n.Tf("cli.run.agentRow", name, model, effort)
 		if s.Description != "" {
 			row += " · " + s.Description
 		}
 		rows = append(rows, row)
 	}
-	return "子代理 (" + strconv.Itoa(len(merged)) + "):\n" + strings.Join(rows, "\n") +
-		"\n模型格式 provider:model(留空继承会话模型)· task 工具委派,子代理只读且完全隔离"
+	return i18n.Tf("cli.run.agentsList", len(merged), strings.Join(rows, "\n"))
 }
 
 // TUIConfig is the /config panel snapshot the overlay edits.
@@ -742,23 +742,18 @@ func (a *App) ConfigListText() string {
 	c := a.TUIConfig()
 	onOff := func(b bool) string {
 		if b {
-			return "开"
+			return i18n.T("tui.config.on")
 		}
-		return "关"
+		return i18n.T("tui.config.off")
 	}
-	ret := "永不清理"
+	ret := i18n.T("tui.config.never")
 	if c.LogRetentionDays > 0 {
-		ret = strconv.Itoa(c.LogRetentionDays) + " 天"
+		ret = i18n.Tf("tui.config.days", c.LogRetentionDays)
 	}
-	return "配置 (TUI 里 /config 打开面板交互修改):\n" +
-		"  上下文自动压缩: " + onOff(c.AutoCompact) + "\n" +
-		"  日志清理周期: " + ret + "\n" +
-		"  Auto Memory(自动记忆): " + onOff(c.AutoMemory) + "\n" +
-		"  Typed Memory(分类记忆): " + onOff(c.TypedMemory) + "\n" +
-		"  Memory Relevance(记忆相关性选择): " + onOff(c.MemoryRelevance) + "\n" +
-		"  Memory Auto Extraction(自动提取记忆): " + onOff(c.MemoryAutoExtract) + "\n" +
-		"  Rewind code(检查点回滚): " + onOff(c.RewindCheckpoints) + "\n" +
-		"  剪贴板图片读取(ctrl+v): " + onOff(c.ClipboardWatch) + " (按需单次读取,空闲时零调用;关闭后完全不触剪贴板)"
+	return i18n.Tf("cli.run.configList",
+		onOff(c.AutoCompact), ret, onOff(c.AutoMemory), onOff(c.TypedMemory),
+		onOff(c.MemoryRelevance), onOff(c.MemoryAutoExtract), onOff(c.RewindCheckpoints),
+		onOff(c.ClipboardWatch))
 }
 
 // planDelta builds the transcript system message carrying the plan
@@ -1295,9 +1290,9 @@ func (a *App) mcpListText() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "mcp servers (%s):\n", a.mcpPath())
 	for _, s := range servers {
-		state := "已停用"
+		state := i18n.T("tui.mcp.statusDisabled")
 		if s.Status != nil {
-			state = fmt.Sprintf("%s · %d 工具", s.Status.State, s.Status.Tools)
+			state = i18n.Tf("cli.run.mcpState", s.Status.State, s.Status.Tools)
 		}
 		fmt.Fprintf(&b, "  %-20s %-14s %s\n", s.Name, s.Config.Transport, state)
 	}
@@ -1656,26 +1651,26 @@ func contextBreakdown(msgs []llm.Message, total int64) *ContextBreakdown {
 func (a *App) CostReport() string {
 	r := a.UsageReport()
 	var b strings.Builder
-	fmt.Fprintf(&b, "用量: 输入 %s · 输出 %s · 缓存读 %s · 缓存写 %s",
-		commaInt(r.Input), commaInt(r.Output), commaInt(r.CacheRead), commaInt(r.CacheWrite))
+	fmt.Fprintf(&b, "%s", i18n.Tf("cli.run.usage",
+		commaInt(r.Input), commaInt(r.Output), commaInt(r.CacheRead), commaInt(r.CacheWrite)))
 	if r.CacheWrite1h > 0 {
-		fmt.Fprintf(&b, " · 缓存写(1h) %s", commaInt(r.CacheWrite1h))
+		fmt.Fprintf(&b, "%s", i18n.Tf("cli.run.usageCache1h", commaInt(r.CacheWrite1h)))
 	}
 	if (a.pricing != llm.Pricing{}) {
-		fmt.Fprintf(&b, " | 成本 $%.4f", r.CostUSD)
+		fmt.Fprintf(&b, "%s", i18n.Tf("cli.run.usageCost", r.CostUSD))
 	}
 	if r.ContextWindow > 0 {
 		pct := 100 * float64(r.ContextTokens) / float64(r.ContextWindow)
-		fmt.Fprintf(&b, "\n上下文: %s / %s (%.1f%%)", commaInt(r.ContextTokens), commaInt(int64(r.ContextWindow)), pct)
+		fmt.Fprintf(&b, "%s", i18n.Tf("cli.run.usageCtx", commaInt(r.ContextTokens), commaInt(int64(r.ContextWindow)), pct))
 	} else {
-		fmt.Fprintf(&b, "\n上下文: %s (窗口未知)", commaInt(r.ContextTokens))
+		fmt.Fprintf(&b, "%s", i18n.Tf("cli.run.usageCtxUnknown", commaInt(r.ContextTokens)))
 	}
 	if reads := r.Input + r.CacheRead; reads > 0 {
-		fmt.Fprintf(&b, " · 缓存命中 %d%%", (100*r.CacheRead+reads/2)/reads)
+		fmt.Fprintf(&b, "%s", i18n.Tf("cli.run.usageCacheHit", (100*r.CacheRead+reads/2)/reads))
 	}
 	if bd := r.Breakdown; bd != nil {
-		fmt.Fprintf(&b, "\n明细: 消息 %s · 系统提示词 %s · 系统工具 %s · 技能 %s · MCP 工具 %s · 其他 %s",
-			commaInt(bd.Messages), commaInt(bd.SysPrompt), commaInt(bd.SysTools), commaInt(bd.Skills), commaInt(bd.McpTools), commaInt(bd.Other))
+		fmt.Fprintf(&b, "%s", i18n.Tf("cli.run.usageDetail",
+			commaInt(bd.Messages), commaInt(bd.SysPrompt), commaInt(bd.SysTools), commaInt(bd.Skills), commaInt(bd.McpTools), commaInt(bd.Other)))
 	}
 	return b.String()
 }

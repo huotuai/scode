@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"scode/internal/agent"
+	"scode/internal/i18n"
 	"scode/internal/config"
 	"scode/internal/llm"
 	"scode/internal/permission"
@@ -187,8 +188,8 @@ func (a *Approver) ReviewSandboxEscalation(ctx context.Context, req agent.Escala
 	// rewrite "a" into feedback and silently deny the session widening.
 	a.kind.Store("tool")
 
-	fmt.Fprintf(a.Err, "\n── sandbox escalation ──\n%s  %s → %s\n%s\n理由:%s\n[y] 仅本次  [a] 本会话生效  [n] 拒绝\n> ",
-		req.Tool, req.CurrentMode, req.RequestedMode, req.Detail, req.Justification)
+	fmt.Fprint(a.Err, i18n.Tf("cli.approval.sandboxPrompt",
+		req.Tool, req.CurrentMode, req.RequestedMode, req.Detail, req.Justification))
 	for {
 		select {
 		case ans := <-a.answer:

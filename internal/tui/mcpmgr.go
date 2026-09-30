@@ -8,6 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"scode/internal/cli"
+	"scode/internal/i18n"
 	"scode/internal/mcp"
 )
 
@@ -56,16 +57,16 @@ type mcpForm struct {
 func (f *mcpForm) fields() []mcpField {
 	var out []mcpField
 	if f.editing == "" {
-		out = append(out, mcpField{"name", "名称 [A-Za-z0-9_-]", f.name, mcpFieldText})
+		out = append(out, mcpField{"name", i18n.T("tui.mcp.nameLabel"), f.name, mcpFieldText})
 	}
-	out = append(out, mcpField{"transport", "传输", f.transport, mcpFieldChoice})
+	out = append(out, mcpField{"transport", i18n.T("tui.mcp.transportLabel"), f.transport, mcpFieldChoice})
 	if f.transport == "stdio" {
-		out = append(out, mcpField{"command", "命令行 (命令 + 参数)", f.command, mcpFieldText})
+		out = append(out, mcpField{"command", i18n.T("tui.mcp.commandLabel"), f.command, mcpFieldText})
 	} else {
 		out = append(out, mcpField{"url", "URL", f.url, mcpFieldText})
 	}
 	out = append(out, mcpField{"policy", "defaultPolicy", f.policy, mcpFieldChoice})
-	out = append(out, mcpField{"save", "保存并连接", "", mcpFieldAction})
+	out = append(out, mcpField{"save", i18n.T("tui.mcp.saveLabel"), "", mcpFieldAction})
 	return out
 }
 
@@ -164,9 +165,9 @@ func (m model) handleMcpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			m.mcpRefresh()
 			if on {
-				return m, m.showToast("mcp(" + name + ") 已启用,连接中")
+				return m, m.showToast(i18n.Tf("tui.mcp.enabled", name))
 			}
-			return m, m.showToast("mcp(" + name + ") 已停用")
+			return m, m.showToast(i18n.Tf("tui.mcp.disabled", name))
 		}
 		return m, nil
 	case "d":
@@ -184,7 +185,7 @@ func (m model) handleMcpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.mcpConfirmDel = false
 		m.mcpRefresh()
-		return m, m.showToast("mcp(" + name + ") 已删除")
+		return m, m.showToast(i18n.Tf("tui.mcp.deleted", name))
 	}
 	return m, nil // modal: swallow everything else
 }
@@ -344,9 +345,9 @@ func (m model) mcpCommit() (tea.Model, tea.Cmd) {
 		return m, m.showToast("mcp: " + err.Error())
 	}
 	if f.editing == "" {
-		return m, m.showToast("mcp(" + name + ") 已保存,连接中")
+		return m, m.showToast(i18n.Tf("tui.mcp.saved", name))
 	}
-	return m, m.showToast("mcp(" + f.editing + ") 已重启")
+	return m, m.showToast(i18n.Tf("tui.mcp.restarted", f.editing))
 }
 
 // mcpView renders the open overlay (list or edit screen).
@@ -360,20 +361,20 @@ func (m *model) mcpView() string {
 // mcpStatusDot maps live status to a colored dot + human state text.
 func mcpStatusDot(s cli.MCPServerInfo) (lipgloss.Style, string) {
 	if !s.Config.IsEnabled() {
-		return mcpDotIdle, "已停用"
+		return mcpDotIdle, i18n.T("tui.mcp.statusDisabled")
 	}
 	if s.Status == nil {
-		return mcpDotIdle, "未运行"
+		return mcpDotIdle, i18n.T("tui.mcp.statusNotRunning")
 	}
 	switch s.Status.State {
 	case mcp.StatusConnected:
-		return dotOK, fmt.Sprintf("已连接 · %d 工具", s.Status.Tools)
+		return dotOK, i18n.Tf("tui.mcp.statusConnected", s.Status.Tools)
 	case mcp.StatusReconnecting:
-		return dotSandbox, fmt.Sprintf("重连中 %d/%d", s.Status.Attempts, s.Status.MaxAttempts)
+		return dotSandbox, i18n.Tf("tui.mcp.statusReconnecting", s.Status.Attempts, s.Status.MaxAttempts)
 	case mcp.StatusGaveUp:
-		return dotFail, "已放弃(重连耗尽)"
+		return dotFail, i18n.T("tui.mcp.statusGaveUp")
 	default:
-		return mcpDotIdle, "连接中…"
+		return mcpDotIdle, i18n.T("tui.mcp.statusConnecting")
 	}
 }
 
@@ -389,20 +390,20 @@ func (m *model) mcpListView() string {
 		}
 	}
 	if len(rows) == 0 {
-		rows = append(rows, dimStyle.Render("  (无服务器 — 按 n 新建)"))
+		rows = append(rows, dimStyle.Render(i18n.T("tui.mcp.empty")))
 	}
-	rows = append(rows, dimStyle.Render("  ↑/↓ 选择 · enter 编辑 · n 新建 · t 启停 · d 删除 · esc 关闭"))
+	rows = append(rows, dimStyle.Render(i18n.T("tui.mcp.listHint")))
 	if m.mcpConfirmDel && m.mcpListIdx < len(m.mcpServers) {
-		rows = append(rows, warnStyle.Render("  再按 d 确认删除 "+m.mcpServers[m.mcpListIdx].Name))
+		rows = append(rows, warnStyle.Render(i18n.Tf("tui.common.confirmDelete", m.mcpServers[m.mcpListIdx].Name)))
 	}
-	return m.overlayView("MCP 服务器", overlayList(rows))
+	return m.overlayView(i18n.T("tui.mcp.title"), overlayList(rows))
 }
 
 func (m *model) mcpEditView() string {
 	f := m.mcpForm
-	title := "MCP 新建"
+	title := i18n.T("tui.mcp.newTitle")
 	if f.editing != "" {
-		title = "MCP 编辑: " + f.editing
+		title = i18n.Tf("tui.mcp.editTitle", f.editing)
 	}
 	var rows []string
 	for i, field := range f.fields() {
@@ -411,7 +412,7 @@ func (m *model) mcpEditView() string {
 			row += ": " + field.value
 		}
 		if field.kind == mcpFieldChoice {
-			row += dimStyle.Render("  (enter 切换)")
+			row += dimStyle.Render(i18n.T("tui.common.cycleHint"))
 		}
 		if i == m.mcpEditField {
 			rows = append(rows, userStyle.Render("> ")+row)
@@ -419,6 +420,6 @@ func (m *model) mcpEditView() string {
 			rows = append(rows, "  "+row)
 		}
 	}
-	rows = append(rows, dimStyle.Render("  ↑/↓ 字段 · enter 切换选项/保存 · 直接输入文字 · ctrl+u 清空 · esc 返回"))
+	rows = append(rows, dimStyle.Render(i18n.T("tui.common.formHint")))
 	return m.overlayView(title, overlayList(rows))
 }

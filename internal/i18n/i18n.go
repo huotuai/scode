@@ -33,31 +33,6 @@ func Set(l Lang) { current = l }
 // Message is one catalog entry in both languages.
 type Message struct{ En, Zh string }
 
-// catalog maps message keys to their translations. Keys are
-// dot-namespaced by surface ("update.notice").
-var catalog = map[string]Message{
-	"update.notice": {
-		En: "A new scode release %s is available (current %s) — run `scode update` to upgrade (%s)",
-		Zh: "scode 有新版本 %s（当前 %s）— 运行 `scode update` 升级（%s）",
-	},
-	"update.checking": {
-		En: "Checking %s for updates...",
-		Zh: "检查更新（%s）...",
-	},
-	"update.uptodate": {
-		En: "scode %s is up to date (latest release: %s)",
-		Zh: "scode %s 已是最新（最新 release: %s）",
-	},
-	"update.done": {
-		En: "Updated to %s — restart scode for it to take effect.",
-		Zh: "已更新到 %s，重新运行 scode 生效。",
-	},
-	"version.uptodate": {
-		En: "Already on the latest version.",
-		Zh: "已是最新版本",
-	},
-}
-
 // T returns the localized string for key; unknown keys fall back to the
 // key itself (visible during development, never silently empty).
 func T(key string) string {

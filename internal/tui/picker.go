@@ -1,13 +1,14 @@
 package tui
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 
 	"charm.land/bubbles/v2/filepicker"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"scode/internal/i18n"
 )
 
 // @ file picker: typing "@" on a fresh token opens a directory browser
@@ -63,9 +64,9 @@ func (m *model) attachPickedFile(path string) {
 		if m.attachImageFile(path) {
 			return
 		}
-		m.appendBlock(errStyle.Render(fmt.Sprintf("无法附加 %s（不是受支持的图片或超过大小上限）— 已插入路径", filepath.Base(path))))
+		m.appendBlock(errStyle.Render(i18n.Tf("tui.picker.attachFail", filepath.Base(path))))
 	} else if isImagePath(path) {
-		m.appendBlock(dimStyle.Render("(当前模型不支持图片输入 — 已插入路径，模型可自行读取文件)"))
+		m.appendBlock(dimStyle.Render(i18n.T("tui.picker.noImageModel")))
 	}
 	m.input.InsertString(m.relPath(path) + " ")
 	m.updatePalette()
@@ -93,14 +94,14 @@ func isImagePath(path string) bool {
 // and the model's image capability.
 func (m *model) pickerView() string {
 	var b strings.Builder
-	hints := "↑↓ 浏览 · enter 进入/选择 · c 剪贴板 · esc 取消"
+	hints := i18n.T("tui.picker.hints")
 	if m.app.Model.Caps.ImageInput {
-		hints += dimStyle.Render("  · 图片→附件 · 其它→路径")
+		hints += dimStyle.Render(i18n.T("tui.picker.hintAttach"))
 	} else {
-		hints += warnStyle.Render("  · 模型不支持图片，一律插路径")
+		hints += warnStyle.Render(i18n.T("tui.picker.hintNoImage"))
 	}
 	b.WriteString(dimStyle.Render("  " + hints))
 	b.WriteString("\n")
 	b.WriteString(m.picker.View())
-	return m.overlayView("选择文件", b.String())
+	return m.overlayView(i18n.T("tui.picker.title"), b.String())
 }

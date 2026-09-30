@@ -121,7 +121,7 @@ func TestTaskToolRun(t *testing.T) {
 	if !strings.Contains(text, "the answer is in internal/agent/loop.go:233") {
 		t.Fatalf("report missing:\n%s", text)
 	}
-	if !strings.Contains(text, "(子代理 researcher · 1 轮") {
+	if !strings.Contains(text, "(sub-agent researcher · 1 turns") {
 		t.Fatalf("footer missing:\n%s", text)
 	}
 	if len(*spend) == 0 || (*spend)[0].Input != 100 {
@@ -150,7 +150,7 @@ func TestTaskToolBuiltinAvailable(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("built-in delegate failed: %+v", res)
 	}
-	if text := resultText(res); !strings.Contains(text, "researched") || !strings.Contains(text, "(子代理 general-purpose ·") {
+	if text := resultText(res); !strings.Contains(text, "researched") || !strings.Contains(text, "(sub-agent general-purpose ·") {
 		t.Fatalf("built-in report = %q", text)
 	}
 }
@@ -208,7 +208,7 @@ func TestTaskToolMultiTurn(t *testing.T) {
 	if !strings.Contains(text, "the answer is 42") {
 		t.Fatalf("report missing:\n%s", text)
 	}
-	if !strings.Contains(text, "(子代理 wanderer · 2 轮 · 1 次工具调用") {
+	if !strings.Contains(text, "(sub-agent wanderer · 2 turns · 1 tool calls") {
 		t.Fatalf("footer counts wrong:\n%s", text)
 	}
 	if len(progress) == 0 || !strings.Contains(progress[len(progress)-1], "read") {

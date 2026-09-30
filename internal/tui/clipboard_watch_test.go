@@ -70,7 +70,7 @@ func TestClipboardOnDemand(t *testing.T) {
 	// ctrl+v attaches and echoes the placeholder.
 	tm, _ := m.handleKey(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl})
 	m = tm.(model)
-	if len(m.clipImgs) != 1 || !strings.Contains(m.input.Value(), "[图片#1]") {
+	if len(m.clipImgs) != 1 || !strings.Contains(m.input.Value(), "[image#1]") {
 		t.Fatalf("ctrl+v did not attach: clipImgs=%+v input=%q", m.clipImgs, m.input.Value())
 	}
 	if probes != 1 {
@@ -133,7 +133,7 @@ func TestClipboardWatchLoop(t *testing.T) {
 	hit = true
 	tm, cmd = m.update(clipLoopTickMsg{gen: gen})
 	m = tm.(model)
-	if len(m.clipImgs) != 1 || !strings.Contains(m.input.Value(), "[图片#1]") {
+	if len(m.clipImgs) != 1 || !strings.Contains(m.input.Value(), "[image#1]") {
 		t.Fatalf("watch hit did not attach: clipImgs=%+v input=%q", m.clipImgs, m.input.Value())
 	}
 	if cmd != nil || !m.clipLoopUntil.IsZero() {
@@ -230,7 +230,7 @@ func TestClipTriggerKeys(t *testing.T) {
 
 	tm, _ := m.handleKey(tea.KeyPressMsg{Code: 'v', Mod: tea.ModAlt})
 	m = tm.(model)
-	if len(m.clipImgs) != 1 || !strings.Contains(m.input.Value(), "[图片#1]") {
+	if len(m.clipImgs) != 1 || !strings.Contains(m.input.Value(), "[image#1]") {
 		t.Fatalf("alt+v did not attach: clipImgs=%+v input=%q", m.clipImgs, m.input.Value())
 	}
 
@@ -267,7 +267,7 @@ func TestPickerFlow(t *testing.T) {
 
 	// Supported model: image selection attaches.
 	m.attachPickedFile(pngPath)
-	if len(m.clipImgs) != 1 || !strings.Contains(m.input.Value(), "[图片#1]") {
+	if len(m.clipImgs) != 1 || !strings.Contains(m.input.Value(), "[image#1]") {
 		t.Fatalf("image not attached: clipImgs=%+v input=%q", m.clipImgs, m.input.Value())
 	}
 	// Non-media: path text, no attachment.

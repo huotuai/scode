@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"scode/internal/config"
+	"scode/internal/i18n"
 )
 
 // /models is the model MANAGER (the /model picker only switches between
@@ -36,7 +37,7 @@ const (
 func (m *model) openModelManager() {
 	cat, err := config.LoadPresetCatalog()
 	if err != nil {
-		m.appendBlock(errStyle.Render("预设模型目录读取失败: " + err.Error()))
+		m.appendBlock(errStyle.Render(i18n.Tf("tui.models.catalogFail", err)))
 		return
 	}
 	m.modelsCat = cat
@@ -140,7 +141,7 @@ func (m *model) modelsEffortChoices() []config.PresetEffort {
 	if pm.Reasoning && len(pm.Efforts) > 0 {
 		return pm.Efforts
 	}
-	return []config.PresetEffort{{Level: "", Label: "无推理(直接确认)"}}
+	return []config.PresetEffort{{Level: "", Label: i18n.T("tui.models.noReasoning")}}
 }
 
 // modelsEnter advances one stage.
@@ -230,7 +231,7 @@ func (m *model) modelsCommit() {
 		ImageInput:    pm.ImageInput,
 	}
 	if err := config.UpsertProvider(profile, pc, ""); err != nil {
-		m.appendBlock(errStyle.Render("配置写入失败: " + err.Error()))
+		m.appendBlock(errStyle.Render(i18n.Tf("tui.models.writeFail", err)))
 		return
 	}
 	var notes []string
@@ -238,10 +239,10 @@ func (m *model) modelsCommit() {
 	// /models refuses while running).
 	p, mid, err := m.app.SetModel(profile, pm.ID)
 	if err != nil {
-		m.appendBlock(errStyle.Render("模型已配置,但切换失败: " + err.Error()))
+		m.appendBlock(errStyle.Render(i18n.Tf("tui.models.switchFail", err)))
 		return
 	}
-	notes = append(notes, "模型已配置并切换 → "+p+" / "+mid)
+	notes = append(notes, i18n.Tf("tui.models.configured", p, mid))
 	effort := ""
 	if choices := m.modelsEffortChoices(); m.confirmIdx >= 0 && m.confirmIdx < len(choices) {
 		effort = choices[m.confirmIdx].Level
@@ -254,15 +255,15 @@ func (m *model) modelsCommit() {
 			return
 		}
 		if pm.Reasoning && effort != "" {
-			notes = append(notes, "推理强度 → "+pm.EffortLabel(effort))
+			notes = append(notes, i18n.Tf("tui.models.effort", pm.EffortLabel(effort)))
 		}
 	}
 	if err := m.app.PersistDefaultModel(p, mid); err != nil {
-		m.appendBlock(dimStyle.Render("(默认模型保存失败: " + err.Error() + ")"))
+		m.appendBlock(dimStyle.Render(i18n.Tf("tui.models.defaultModelFail", err)))
 	} else if err := m.app.PersistDefaultThinking(effort); err != nil {
-		m.appendBlock(dimStyle.Render("(默认推理强度保存失败: " + err.Error() + ")"))
+		m.appendBlock(dimStyle.Render(i18n.Tf("tui.models.defaultEffortFail", err)))
 	} else {
-		notes = append(notes, "已存为默认")
+		notes = append(notes, i18n.T("tui.models.savedDefault"))
 	}
 	m.appendBlock(noteLine(strings.Join(notes, " · ")))
 }
@@ -327,9 +328,9 @@ func (m *model) modelsView() string {
 func (m *model) modelsVendorView() string {
 	var rows []string
 	for i, v := range m.modelsCat.Vendors {
-		row := v.Name + dimStyle.Render(fmt.Sprintf(" · %s · %d 个模型", v.Protocol, len(v.Models)))
+		row := v.Name + dimStyle.Render(i18n.Tf("tui.models.vendorRow", v.Protocol, len(v.Models)))
 		if m.modelsConfigured(v.ID) {
-			row += dimStyle.Render(" · 已配置")
+			row += dimStyle.Render(i18n.T("tui.models.configuredMark"))
 		}
 		if i == m.vendorIdx {
 			rows = append(rows, userStyle.Render("> ")+row)
@@ -337,8 +338,8 @@ func (m *model) modelsVendorView() string {
 			rows = append(rows, "  "+row)
 		}
 	}
-	rows = append(rows, dimStyle.Render("  ↑/↓ 选择 · Enter 配置 Key · Esc 取消"))
-	return m.overlayView("模型管理 · 选择厂商", overlayList(rows))
+	rows = append(rows, dimStyle.Render(i18n.T("tui.models.vendorHint")))
+	return m.overlayView(i18n.T("tui.models.vendorTitle"), overlayList(rows))
 }
 
 // modelsKeyView renders stage two: vendor/endpoint header, the masked
@@ -363,10 +364,10 @@ func (m *model) modelsKeyView() string {
 	}
 	rows = append(rows, "  API Key: "+disp+dimStyle.Render("▏"))
 	if m.keyBuf == "" && m.keyExisting != "" {
-		rows = append(rows, dimStyle.Render("  已保存 Key: "+maskKey(m.keyExisting)+" · 直接 Enter 保留,输入则替换"))
+		rows = append(rows, dimStyle.Render(i18n.Tf("tui.models.savedKey", maskKey(m.keyExisting))))
 	}
-	rows = append(rows, dimStyle.Render("  Enter 下一步(选择模型) · Esc 返回 · 留空则使用环境变量"))
-	return m.overlayView("配置 API Key", overlayList(rows))
+	rows = append(rows, dimStyle.Render(i18n.T("tui.models.keyHint")))
+	return m.overlayView(i18n.T("tui.models.keyTitle"), overlayList(rows))
 }
 
 // modelsModelView renders stage three: the vendor's preset models with
@@ -375,16 +376,16 @@ func (m *model) modelsKeyView() string {
 func (m *model) modelsModelView() string {
 	v := m.modelsVendor()
 	if v == nil {
-		return m.overlayView("选择模型", "")
+		return m.overlayView(i18n.T("tui.models.modelTitle"), "")
 	}
 	rows := []string{dimStyle.Render("  " + v.Name + dimStyle.Render(" · "+v.Protocol))}
 	for i, pm := range v.Models {
 		row := pm.DisplayName() + dimStyle.Render(" · "+presetSpec(&pm))
 		if pm.Reasoning {
-			row += dimStyle.Render(" · 推理")
+			row += dimStyle.Render(i18n.T("tui.models.reasoningMark"))
 		}
 		if m.modelsModelConfigured(v.ID, pm.ID) {
-			row += dimStyle.Render(" · 已配置")
+			row += dimStyle.Render(i18n.T("tui.models.configuredMark"))
 		}
 		if i == m.modelsIdx {
 			rows = append(rows, userStyle.Render("> ")+row)
@@ -392,8 +393,8 @@ func (m *model) modelsModelView() string {
 			rows = append(rows, "  "+row)
 		}
 	}
-	rows = append(rows, dimStyle.Render("  ↑/↓ 选择 · Enter 确认信息 · Esc 返回"))
-	return m.overlayView("选择模型", overlayList(rows))
+	rows = append(rows, dimStyle.Render(i18n.T("tui.models.modelHint")))
+	return m.overlayView(i18n.T("tui.models.modelTitle"), overlayList(rows))
 }
 
 // modelsConfirmView renders stage four: the full summary of what is
@@ -402,31 +403,31 @@ func (m *model) modelsModelView() string {
 func (m *model) modelsConfirmView() string {
 	v := m.modelsVendor()
 	if v == nil || m.modelsIdx < 0 || m.modelsIdx >= len(v.Models) {
-		return m.overlayView("确认配置", "")
+		return m.overlayView(i18n.T("tui.models.confirmTitle"), "")
 	}
 	pm := v.Models[m.modelsIdx]
 	key := strings.TrimSpace(m.keyBuf)
 	if key == "" {
 		key = m.keyExisting
 	}
-	keyState := "未填写(使用环境变量)"
+	keyState := i18n.T("tui.models.keyEmpty")
 	if key != "" {
 		keyState = maskKey(key)
 	}
 	rows := []string{
-		"  厂商:   " + v.Name,
-		"  模型:   " + pm.DisplayName() + dimStyle.Render(" ("+pm.ID+")"),
-		"  协议:   " + v.Protocol,
-		"  参数:   " + dimStyle.Render(presetSpec(&pm)),
+		i18n.T("tui.models.vendorLabel") + v.Name,
+		i18n.T("tui.models.modelLabel") + pm.DisplayName() + dimStyle.Render(" ("+pm.ID+")"),
+		i18n.T("tui.models.protocolLabel") + v.Protocol,
+		i18n.T("tui.models.specLabel") + dimStyle.Render(presetSpec(&pm)),
 		"  Key:    " + keyState,
-		"  写入:   " + dimStyle.Render("settings.json providers."+config.ProfileName(v.ID, pm.ID)),
+		i18n.T("tui.models.writeLabel") + dimStyle.Render("settings.json providers."+config.ProfileName(v.ID, pm.ID)),
 	}
 	choices := m.modelsEffortChoices()
 	if pm.Reasoning && len(choices) > 0 {
 		for i, e := range choices {
 			row := e.Label + dimStyle.Render(" ("+e.Level+")")
 			if e.Level == pm.DefaultEffort {
-				row += dimStyle.Render(" · 预设")
+				row += dimStyle.Render(i18n.T("tui.models.presetMark"))
 			}
 			if i == m.confirmIdx {
 				rows = append(rows, userStyle.Render("> ")+row)
@@ -434,16 +435,16 @@ func (m *model) modelsConfirmView() string {
 				rows = append(rows, "  "+row)
 			}
 		}
-		rows = append(rows, dimStyle.Render("  ↑/↓ 选择推理强度 · Enter 完成配置 · Esc 返回"))
+		rows = append(rows, dimStyle.Render(i18n.T("tui.models.effortHint")))
 	} else {
-		rows = append(rows, dimStyle.Render("  Enter 完成配置 · Esc 返回"))
+		rows = append(rows, dimStyle.Render(i18n.T("tui.models.confirmHint")))
 	}
-	return m.overlayView("确认配置", overlayList(rows))
+	return m.overlayView(i18n.T("tui.models.confirmTitle"), overlayList(rows))
 }
 
 // presetSpec formats the preset parameters line (context / output cap).
 func presetSpec(pm *config.PresetModel) string {
-	return "上下文 " + presetTokens(pm.ContextWindow) + " · 最大输出 " + presetTokens(pm.MaxTokens)
+	return i18n.Tf("tui.models.spec", presetTokens(pm.ContextWindow), presetTokens(pm.MaxTokens))
 }
 
 // presetTokens compacts a token count (200000 → 200K, 1000000 → 1M).

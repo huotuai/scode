@@ -82,7 +82,7 @@ func TestSubAgentE2E(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(result, "(子代理 researcher ·") {
+	if !strings.Contains(result, "(sub-agent researcher ·") {
 		t.Fatalf("task result missing the delegate footer:\n%s", result)
 	}
 

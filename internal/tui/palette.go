@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"scode/internal/cli"
+	"scode/internal/i18n"
 )
 
 // Command completion palette: typing "/" opens the full command list
@@ -86,7 +87,7 @@ func (m *model) updatePalette() {
 	cmds = append(cmds, cli.PromptCommandInfos()...)
 	// TUI-local commands (the overlay lives here, not in cli).
 	cmds = append(cmds,
-		cli.CommandInfo{Name: "/sandbox", Hint: "", Desc: "选择沙箱模式（弹出选择框）"},
+		cli.CommandInfo{Name: "/sandbox", Hint: "", Desc: i18n.T("tui.palette.sandboxDesc")},
 	)
 	m.paletteHits = matchCommands(text, cmds)
 	m.paletteOpen = len(m.paletteHits) > 0
@@ -173,7 +174,7 @@ func (m *model) paletteView() string {
 	if after > 0 {
 		rows = append(rows, dimStyle.Render(fmt.Sprintf("  … %d more", after)))
 	}
-	return m.overlayView("命令", strings.Join(rows, "\n"))
+	return m.overlayView(i18n.T("tui.palette.title"), strings.Join(rows, "\n"))
 }
 
 // truncateRunes shortens s to n runes with an ellipsis (byte-based

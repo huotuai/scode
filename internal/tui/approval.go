@@ -8,6 +8,7 @@ import (
 
 	"scode/internal/agent"
 	"scode/internal/cli"
+	"scode/internal/i18n"
 	"scode/internal/llm"
 	"scode/internal/permission"
 )
@@ -60,9 +61,9 @@ type approvalButton struct {
 func approvalButtons(kind string) []approvalButton {
 	switch kind {
 	case "tool":
-		return []approvalButton{{"y", "允许一次"}, {"a", "本会话允许"}, {"p", "本项目允许"}, {"n", "拒绝"}}
+		return []approvalButton{{"y", i18n.T("tui.approval.allowOnce")}, {"a", i18n.T("tui.approval.allowSession")}, {"p", i18n.T("tui.approval.allowProject")}, {"n", i18n.T("tui.approval.deny")}}
 	case "sandbox":
-		return []approvalButton{{"y", "仅本次"}, {"a", "本会话生效"}, {"n", "拒绝"}}
+		return []approvalButton{{"y", i18n.T("tui.approval.thisTimeOnly")}, {"a", i18n.T("tui.approval.forSession")}, {"n", i18n.T("tui.approval.deny")}}
 	}
 	return nil
 }
@@ -70,9 +71,9 @@ func approvalButtons(kind string) []approvalButton {
 func (a *approver) Ask(ctx context.Context, call llm.Block, rule *permission.Rule, exact string) cli.ApprovalResult {
 	ans := a.ask(ctx, &approvalRequest{
 		kind:   "tool",
-		title:  fmt.Sprintf("工具审批 · 规则 %q", rule.Raw),
+		title:  i18n.Tf("tui.approval.toolTitle", rule.Raw),
 		body:   describeCall(call),
-		hint:   "快捷键 [y] 允许一次 [a] 本会话允许 [p] 本项目允许 [n] 拒绝",
+		hint:   i18n.T("tui.approval.toolHint"),
 		answer: make(chan string, 1),
 	})
 	switch ans {
@@ -96,7 +97,7 @@ func (a *approver) ReviewPlan(tc agent.ToolContext, plan string) (bool, string) 
 		kind:   "plan",
 		title:  "plan review",
 		body:   strings.TrimSpace(plan),
-		hint:   "[y] 批准并执行  [n] 拒绝  其他输入=反馈意见,打回修订  [esc] 拒绝",
+		hint:   i18n.T("tui.approval.planHint"),
 		answer: make(chan string, 1),
 	})
 	switch {
@@ -114,9 +115,9 @@ func (a *approver) ReviewPlan(tc agent.ToolContext, plan string) (bool, string) 
 func (a *approver) ReviewSandboxEscalation(ctx context.Context, req agent.EscalationRequest) agent.EscalationResult {
 	ans := a.ask(ctx, &approvalRequest{
 		kind:   "sandbox",
-		title:  "沙箱提权审批",
-		body:   fmt.Sprintf("%s  %s → %s\n%s\n理由: %s", req.Tool, req.CurrentMode, req.RequestedMode, req.Detail, req.Justification),
-		hint:   "快捷键 [y] 仅本次 [a] 本会话生效 [n] 拒绝",
+		title:  i18n.T("tui.approval.sandboxTitle"),
+		body:   i18n.Tf("tui.approval.sandboxBody", req.Tool, req.CurrentMode, req.RequestedMode, req.Detail, req.Justification),
+		hint:   i18n.T("tui.approval.sandboxHint"),
 		answer: make(chan string, 1),
 	})
 	switch ans {

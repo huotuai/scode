@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+
+	"scode/internal/i18n"
 )
 
 // /sandbox: an overlay picker for the session's sandbox mode — the TUI
@@ -17,10 +19,14 @@ type sandboxMode struct {
 	desc  string
 }
 
-var sandboxModes = []sandboxMode{
-	{value: "read-only", desc: "禁止一切文件修改"},
-	{value: "workspace-write", desc: "仅工作区与临时目录可写"},
-	{value: "danger-full-access", desc: "文件修改不受沙箱限制"},
+// sandboxModes are the selectable policies (dsh sandbox vocabulary).
+// A function (not a var) so the display language is read at render time.
+func sandboxModes() []sandboxMode {
+	return []sandboxMode{
+		{value: "read-only", desc: i18n.T("tui.sandbox.readOnlyDesc")},
+		{value: "workspace-write", desc: i18n.T("tui.sandbox.workspaceWriteDesc")},
+		{value: "danger-full-access", desc: i18n.T("tui.sandbox.fullAccessDesc")},
+	}
 }
 
 // sandboxBadge maps a mode to its short word + accent color (the status
@@ -29,11 +35,11 @@ var sandboxModes = []sandboxMode{
 func sandboxBadge(mode string) (string, string) {
 	switch mode {
 	case "read-only":
-		return "只读", "6"
+		return i18n.T("tui.sandbox.badgeReadOnly"), "6"
 	case "workspace-write":
-		return "可写", "39"
+		return i18n.T("tui.sandbox.badgeWritable"), "39"
 	case "danger-full-access":
-		return "不限制", "214"
+		return i18n.T("tui.sandbox.badgeUnrestricted"), "214"
 	}
 	return "?", "8"
 }
@@ -42,20 +48,20 @@ func sandboxBadge(mode string) (string, string) {
 func sandboxNote(mode string) string {
 	switch mode {
 	case "danger-full-access":
-		return "沙箱已关闭(不限制文件修改)"
+		return i18n.T("tui.sandbox.noteOff")
 	case "workspace-write":
-		return "沙箱:仅工作区可写"
+		return i18n.T("tui.sandbox.noteWorkspace")
 	case "read-only":
-		return "沙箱:只读(禁止文件修改)"
+		return i18n.T("tui.sandbox.noteReadOnly")
 	}
-	return "沙箱:" + mode
+	return i18n.Tf("tui.sandbox.noteMode", mode)
 }
 
 // openSandbox opens the picker with the highlight on the current mode.
 func (m *model) openSandbox() {
 	m.sandboxOpen = true
 	m.sandboxIdx = 0
-	for i, md := range sandboxModes {
+	for i, md := range sandboxModes() {
 		if md.value == m.app.SandboxMode() {
 			m.sandboxIdx = i
 		}
@@ -68,10 +74,10 @@ func (m *model) openSandbox() {
 func (m *model) applySandbox(idx int) {
 	m.sandboxOpen = false
 	m.resize()
-	if idx < 0 || idx >= len(sandboxModes) {
+	if idx < 0 || idx >= len(sandboxModes()) {
 		return
 	}
-	mode := sandboxModes[idx].value
+	mode := sandboxModes()[idx].value
 	if mode == m.app.SandboxMode() {
 		return
 	}
@@ -88,12 +94,19 @@ func (m *model) applySandbox(idx int) {
 func (m *model) sandboxView() string {
 	cur := m.app.SandboxMode()
 	var rows []string
-	for i, md := range sandboxModes {
+	for i, md := range sandboxModes() {
 		word, color := sandboxBadge(md.value)
-		row := statusFg(color).Render(word) + strings.Repeat(" ", 8-lipgloss.Width(word)) +
+		// Pad AFTER the badge word, clamped: the English words run wider
+		// than the 8-cell budget the Chinese layout assumed (a negative
+		// repeat would panic).
+		pad := 8 - lipgloss.Width(word)
+		if pad < 1 {
+			pad = 1
+		}
+		row := statusFg(color).Render(word) + strings.Repeat(" ", pad) +
 			dimStyle.Render(md.desc)
 		if md.value == cur {
-			row += dimStyle.Render(" · 当前")
+			row += dimStyle.Render(i18n.T("tui.sandbox.currentMark"))
 		}
 		if i == m.sandboxIdx {
 			rows = append(rows, userStyle.Render("> ")+row)
@@ -101,6 +114,6 @@ func (m *model) sandboxView() string {
 			rows = append(rows, "  "+row)
 		}
 	}
-	rows = append(rows, dimStyle.Render("  ↑/↓ 选择 · Enter 应用 · Esc 取消"))
-	return m.overlayView("沙箱模式", overlayList(rows))
+	rows = append(rows, dimStyle.Render(i18n.T("tui.sandbox.hint")))
+	return m.overlayView(i18n.T("tui.sandbox.title"), overlayList(rows))
 }

@@ -13,6 +13,7 @@ import (
 
 	"scode/internal/agent"
 	"scode/internal/config"
+	"scode/internal/i18n"
 )
 
 // runPrompt drives one prompt to completion, streaming events through
@@ -136,7 +137,7 @@ var ErrReported = errors.New("reported")
 // (REPL or TUI) ends: the session id plus how to pick it back up.
 func (a *App) ResumeHint() string {
 	id := a.Sess.Header().ID
-	return fmt.Sprintf("会话已保存 %s · 恢复: scode --resume %s", id, id)
+	return i18n.Tf("cli.print.sessionSaved", id, id)
 }
 
 // REPL is the interactive line mode. A single reader goroutine owns
@@ -296,7 +297,7 @@ func (a *App) Command(line string) (out string, done bool, err error) {
 		}
 		return strings.TrimRight(b.String(), "\n"), false, nil
 	case line == "/model":
-		return fmt.Sprintf("%s / %s — 切换: /model <名称> (TUI 中直接 /model 弹出选择框)", a.Model.Provider, a.Model.ID), false, nil
+		return i18n.Tf("cli.print.modelLine", a.Model.Provider, a.Model.ID), false, nil
 	case strings.HasPrefix(line, "/model "):
 		q := strings.TrimSpace(strings.TrimPrefix(line, "/model"))
 		choices := a.ConfiguredModels()
@@ -341,20 +342,20 @@ func (a *App) Command(line string) (out string, done bool, err error) {
 		// so its contents are still inspectable here.
 		cat, err := config.LoadPresetCatalog()
 		if err != nil {
-			return "预设模型目录读取失败: " + err.Error(), false, nil
+			return i18n.Tf("tui.models.catalogFail", err), false, nil
 		}
 		var b strings.Builder
-		fmt.Fprintln(&b, "预设模型目录 (TUI 中 /models 弹出交互配置: 厂商 → Key → 模型 → 确认):")
+		fmt.Fprintln(&b, i18n.T("cli.print.catalogHeader"))
 		for _, v := range cat.Vendors {
 			fmt.Fprintf(&b, "%s (%s)\n", v.Name, v.Protocol)
 			for _, pm := range v.Models {
-				spec := fmt.Sprintf("上下文 %d · 最大输出 %d", pm.ContextWindow, pm.MaxTokens)
+				spec := i18n.Tf("cli.print.spec", pm.ContextWindow, pm.MaxTokens)
 				if pm.Reasoning {
 					var lv []string
 					for _, e := range pm.Efforts {
 						lv = append(lv, e.Level)
 					}
-					spec += " · 推理 " + strings.Join(lv, "/")
+					spec += i18n.Tf("cli.print.specReasoning", strings.Join(lv, "/"))
 				}
 				fmt.Fprintf(&b, "  %s — %s\n", pm.ID, spec)
 			}
@@ -396,7 +397,7 @@ func (a *App) Command(line string) (out string, done bool, err error) {
 		if err != nil {
 			return "new session failed: " + err.Error(), false, nil
 		}
-		return fmt.Sprintf("新会话 %s 已开始 — 原会话恢复: scode --resume %s", newID, oldID), false, nil
+		return i18n.Tf("cli.print.newSession", newID, oldID), false, nil
 	case len(line) > 8 && line[:8] == "/resume ":
 		return "resume needs a restart: scode --resume <id>", false, nil
 	default:

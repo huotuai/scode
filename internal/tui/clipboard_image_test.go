@@ -276,7 +276,7 @@ func TestDibToPNGRejectsRLE(t *testing.T) {
 func TestSplitReferenced(t *testing.T) {
 	c1 := clipImage{id: 1, block: llm.Block{Kind: llm.BlockImage, MimeType: "image/png", Data: "QQ=="}}
 	c2 := clipImage{id: 2, block: llm.Block{Kind: llm.BlockImage, MimeType: "image/png", Data: "Qg=="}}
-	kept, dropped := splitReferenced("看这个 [图片#2] 怎么样", []clipImage{c1, c2})
+	kept, dropped := splitReferenced("看这个 [image#2] 怎么样", []clipImage{c1, c2})
 	if len(kept) != 1 || kept[0].id != 2 {
 		t.Fatalf("kept = %+v", kept)
 	}
@@ -287,7 +287,7 @@ func TestSplitReferenced(t *testing.T) {
 	if len(blocks) != 1 || blocks[0].Kind != llm.BlockImage {
 		t.Fatalf("blocks = %+v", blocks)
 	}
-	if got := stripPlaceholders("a [图片#1] b [图片#2]", []clipImage{c1, c2}); got != "a  b " {
+	if got := stripPlaceholders("a [image#1] b [image#2]", []clipImage{c1, c2}); got != "a  b " {
 		t.Fatalf("strip = %q", got)
 	}
 }
@@ -305,7 +305,7 @@ func TestAttachClipboardImage(t *testing.T) {
 	if !m.attachClipboardImage() {
 		t.Fatal("image clipboard not consumed")
 	}
-	if got := m.input.Value(); got != "[图片#1]" {
+	if got := m.input.Value(); got != "[image#1]" {
 		t.Fatalf("input = %q", got)
 	}
 	if len(m.clipImgs) != 1 || m.clipImgs[0].block.Kind != llm.BlockImage {

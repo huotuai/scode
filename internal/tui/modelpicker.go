@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"scode/internal/i18n"
 )
 
 // /model runs TWO stages in one command: pick the configured
@@ -27,7 +29,7 @@ var modelEfforts = []string{"", "off", "low", "medium", "high"}
 func (m *model) openModelPicker() {
 	m.modelChoices = m.app.ConfiguredModels()
 	if len(m.modelChoices) == 0 {
-		m.appendBlock(noteLine("没有已配置的模型 (settings.json 的 providers)"))
+		m.appendBlock(noteLine(i18n.T("tui.modelpicker.none")))
 		return
 	}
 	prov, mid := m.app.CurrentModel()
@@ -84,7 +86,7 @@ func (m *model) modelCommit() {
 				return
 			}
 			p, mid = np, nMid
-			notes = append(notes, "模型 → "+p+" / "+mid)
+			notes = append(notes, i18n.Tf("tui.modelpicker.switched", p, mid))
 		}
 	}
 	if m.modelEffortIdx >= 0 && m.modelEffortIdx < len(modelEfforts) {
@@ -93,16 +95,16 @@ func (m *model) modelCommit() {
 				m.appendBlock(errStyle.Render("error: " + err.Error()))
 				return
 			}
-			notes = append(notes, "推理强度 → "+thinkingLabel(lv))
+			notes = append(notes, i18n.Tf("tui.models.effort", thinkingLabel(lv)))
 		}
 	}
 	// Remember the choice as the settings-level defaults.
 	if err := m.app.PersistDefaultModel(p, mid); err != nil {
-		m.appendBlock(dimStyle.Render("(默认模型保存失败: " + err.Error() + ")"))
+		m.appendBlock(dimStyle.Render(i18n.Tf("tui.models.defaultModelFail", err)))
 	} else if err := m.app.PersistDefaultThinking(modelEfforts[m.modelEffortIdx]); err != nil {
-		m.appendBlock(dimStyle.Render("(默认推理强度保存失败: " + err.Error() + ")"))
+		m.appendBlock(dimStyle.Render(i18n.Tf("tui.models.defaultEffortFail", err)))
 	} else {
-		notes = append(notes, "已存为默认")
+		notes = append(notes, i18n.T("tui.models.savedDefault"))
 	}
 	if len(notes) > 0 {
 		m.appendBlock(noteLine(strings.Join(notes, " · ")))
@@ -148,7 +150,7 @@ func (m *model) modelListView() string {
 	for i, c := range hits {
 		row := c.Label
 		if c.Provider == prov && c.Model == mid {
-			row += dimStyle.Render(" · 当前")
+			row += dimStyle.Render(i18n.T("tui.sandbox.currentMark"))
 		}
 		if i == m.modelIdx-before {
 			rows = append(rows, userStyle.Render("> ")+row)
@@ -159,8 +161,8 @@ func (m *model) modelListView() string {
 	if after > 0 {
 		rows = append(rows, dimStyle.Render(fmt.Sprintf("  … %d more", after)))
 	}
-	rows = append(rows, dimStyle.Render("  ↑/↓ 选择 · Enter 下一步(推理强度) · Esc 取消"))
-	return m.overlayView("切换模型", overlayList(rows))
+	rows = append(rows, dimStyle.Render(i18n.T("tui.modelpicker.listHint")))
+	return m.overlayView(i18n.T("tui.modelpicker.listTitle"), overlayList(rows))
 }
 
 // modelEffortView renders the second stage: the pending model as a
@@ -175,7 +177,7 @@ func (m *model) modelEffortView() string {
 	for i, lv := range modelEfforts {
 		row := thinkingLabel(lv)
 		if lv == cur {
-			row += dimStyle.Render(" · 当前")
+			row += dimStyle.Render(i18n.T("tui.sandbox.currentMark"))
 		}
 		if i == m.modelEffortIdx {
 			rows = append(rows, userStyle.Render("> ")+row)
@@ -183,6 +185,6 @@ func (m *model) modelEffortView() string {
 			rows = append(rows, "  "+row)
 		}
 	}
-	rows = append(rows, dimStyle.Render("  ↑/↓ 选择 · Enter 应用(模型+推理强度) · Esc 返回"))
-	return m.overlayView("推理强度", overlayList(rows))
+	rows = append(rows, dimStyle.Render(i18n.T("tui.modelpicker.effortHint")))
+	return m.overlayView(i18n.T("tui.modelpicker.effortTitle"), overlayList(rows))
 }

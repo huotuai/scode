@@ -9,6 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"scode/internal/i18n"
 	"scode/internal/plantrack"
 )
 
@@ -105,7 +106,7 @@ func welcomeBanner(prov, modelID, cwd, session string) string {
 		// The cwd keeps its TAIL when over budget — the nearest
 		// directories are what identifies the project.
 		dimStyle.Render("📁 " + truncateLeft(collapseHome(cwd), infoCap-3)),
-		dimStyle.Render(bannerTruncate("会话 "+session, infoCap)),
+		dimStyle.Render(bannerTruncate(i18n.Tf("tui.render.session", session), infoCap)),
 	}
 	var b strings.Builder
 	for i, l := range bannerArt {
@@ -116,8 +117,8 @@ func welcomeBanner(prov, modelID, cwd, session string) string {
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("Enter 发送 · ctrl+j 换行 · 运行中输入=steer · esc 中断 · ctrl+c 退出") + "\n")
-	b.WriteString(dimStyle.Render("ctrl+o 展开思考 · @ 选文件 · alt+v 贴图 · / 命令"))
+	b.WriteString(dimStyle.Render(i18n.T("tui.render.hintLine1")) + "\n")
+	b.WriteString(dimStyle.Render(i18n.T("tui.render.hintLine2")))
 	return b.String()
 }
 
@@ -302,7 +303,7 @@ func (m *model) renderThinkingCapped(raw string, capBytes int) string {
 	}
 	body := thinkStyle.Render(strings.Join(lines, "\n"))
 	if hidden > 0 {
-		header := dimStyle.Render(fmt.Sprintf("… 思考共 %d 行 (ctrl+o 展开)", hidden+thinkingMaxLines))
+		header := dimStyle.Render(i18n.Tf("tui.render.thinkingFold", hidden+thinkingMaxLines))
 		return gutterView(dimStyle, header+"\n"+body)
 	}
 	return gutterView(dimStyle, body)
@@ -318,7 +319,7 @@ func (m *model) inputBoxView() string {
 	// Plain top rule by default; only a pending plan review gets a label.
 	label := ""
 	if m.pending != nil && m.pending.kind == "plan" {
-		label = " ❯ 计划反馈 "
+		label = i18n.T("tui.render.planFeedbackLabel")
 	}
 	lead := "─" + label
 	inner := w - 2 // cells between the corner glyphs
@@ -352,7 +353,7 @@ func (m *model) approvalView() string {
 		rows = append(rows, "  "+l) // text under the title column
 	}
 	rows = append(rows, "", m.approvalButtonsRow(),
-		dimStyle.Render("  ←/→ 切换 · Enter 确认 · Esc 拒绝 · "+req.hint))
+		dimStyle.Render(i18n.Tf("tui.render.approvalHint", req.hint)))
 	return m.overlayBox("3", req.title, strings.Join(rows, "\n"))
 }
 
@@ -369,9 +370,12 @@ func (m *model) approvalButtonsRow() string {
 }
 
 // planButtons are the plan-review actions in display order; Enter sends
-// the focused one (打回修订 turns the typed input — or a generic note
-// when empty — into revision feedback).
-var planButtons = []string{"批准执行", "打回修订", "拒绝"}
+// the focused one (Send back turns the typed input — or a generic note
+// when empty — into revision feedback). A function (not a var) so the
+// display language is read at render time.
+func planButtons() []string {
+	return []string{i18n.T("tui.render.planApprove"), i18n.T("tui.render.planRevise"), i18n.T("tui.render.planReject")}
+}
 
 // planApprovalView renders the plan review: the plan body scrolls inside
 // a height-capped window (a long plan never swallows the screen), the
@@ -381,7 +385,7 @@ func (m *model) planApprovalView() string {
 	req := m.pending
 	w := m.width
 	if w < 16 {
-		return warnStyle.Render("── 计划确认 ──") + "\n" + req.body
+		return warnStyle.Render("── "+i18n.T("tui.render.planTitle")+" ──") + "\n" + req.body
 	}
 	lines, budget := m.planWindow()
 	scroll := min(m.planScroll, max(0, len(lines)-budget))
@@ -394,10 +398,10 @@ func (m *model) planApprovalView() string {
 		rows = append(rows, "  "+l) // text under the title column
 	}
 	if len(lines) > budget {
-		rows = append(rows, dimStyle.Render(fmt.Sprintf("  (第 %d–%d 行,共 %d 行)", scroll+1, end, len(lines))))
+		rows = append(rows, dimStyle.Render(i18n.Tf("tui.render.planLines", scroll+1, end, len(lines))))
 	}
-	rows = append(rows, "", m.planButtonsRow(), dimStyle.Render("  ↑/↓ 滚动 · ←/→ 切换按钮 · Enter 确认 · 输入文字后 Enter=打回修订 · Esc 拒绝"))
-	return m.overlayBox("3", "计划确认", strings.Join(rows, "\n"))
+	rows = append(rows, "", m.planButtonsRow(), dimStyle.Render(i18n.T("tui.render.planHint")))
+	return m.overlayBox("3", i18n.T("tui.render.planTitle"), strings.Join(rows, "\n"))
 }
 
 // buttonCell renders one action button: focused inverts (orange
@@ -417,8 +421,9 @@ func buttonCell(label string, focused bool) string {
 // planButtonsRow renders the action buttons: the focused one inverts
 // (orange fill), the rest dim outlines.
 func (m *model) planButtonsRow() string {
-	cells := make([]string, len(planButtons))
-	for i, label := range planButtons {
+	btns := planButtons()
+	cells := make([]string, len(btns))
+	for i, label := range btns {
 		cells[i] = buttonCell(label, i == m.planBtn)
 	}
 	return "  " + strings.Join(cells, "  ") // under the title column
@@ -560,9 +565,9 @@ func (m *model) statusSegments() []statusSeg {
 		segs = append(segs, statusSeg{text: ctxStyle.Render(ctxText)})
 
 		// Average cache hit rate: cache reads over all prompt-side reads.
-		cacheText := "缓存 —"
+		cacheText := i18n.T("tui.render.cacheNone")
 		if reads := m.usage.Input + m.usage.CacheRead; reads > 0 {
-			cacheText = fmt.Sprintf("缓存 %d%%", (100*m.usage.CacheRead+reads/2)/reads)
+			cacheText = i18n.Tf("tui.render.cache", (100*m.usage.CacheRead+reads/2)/reads)
 		}
 		segs = append(segs, statusSeg{text: statusCacheStyle.Render(cacheText), drop: 2})
 
@@ -578,7 +583,7 @@ func (m *model) statusSegments() []statusSeg {
 			}
 		}
 		segs = append(segs, statusSeg{
-			text: statusPlanStyle.Render(fmt.Sprintf("计划 %d/%d", done, len(plan.Items))),
+			text: statusPlanStyle.Render(i18n.Tf("tui.render.planProgress", done, len(plan.Items))),
 			drop: 2,
 		})
 	}
@@ -596,15 +601,15 @@ func (m *model) statusSegments() []statusSeg {
 func thinkingLabel(lv string) string {
 	switch lv {
 	case "off":
-		return "关闭"
+		return i18n.T("tui.render.effortOff")
 	case "low":
-		return "低"
+		return i18n.T("tui.render.effortLow")
 	case "medium":
-		return "中"
+		return i18n.T("tui.render.effortMedium")
 	case "high":
-		return "高"
+		return i18n.T("tui.render.effortHigh")
 	}
-	return "默认"
+	return i18n.T("tui.render.effortDefault")
 }
 
 // collapseHome shortens a home-relative path to ~/… (prefix match is

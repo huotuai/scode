@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"scode/internal/agent"
+	"scode/internal/i18n"
 	"scode/internal/llm"
 	"scode/internal/subagent"
 )
@@ -26,7 +27,7 @@ import (
 // thing as the tool result).
 func taskReportPreview(text string, w int) []string {
 	for _, l := range strings.Split(text, "\n") {
-		if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, "(子代理") {
+		if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, subagent.ReportFooterPrefix) {
 			return []string{dimStyle.Render(ansi.Truncate(l, w, "…"))}
 		}
 	}
@@ -45,9 +46,9 @@ func toolRowName(call *llm.Block) string {
 	}
 	_ = json.Unmarshal(call.Arguments, &a)
 	if a.Agent == "" {
-		return "子代理"
+		return i18n.T("tui.tool.subagent")
 	}
-	return "子代理 " + a.Agent
+	return i18n.Tf("tui.tool.subagentNamed", a.Agent)
 }
 
 // toolArgs is the best-effort decode of a call's arguments — every
@@ -99,13 +100,13 @@ func toolSummary(name string, raw []byte) string {
 		}
 		return s
 	case "write":
-		return fmt.Sprintf("%s (写入 %d 行)", shortPath(a.Path), lineCount(a.Content))
+		return i18n.Tf("tui.tool.writeSummary", shortPath(a.Path), lineCount(a.Content))
 	case "edit":
 		n := len(a.Edits)
 		if n == 0 {
 			return shortPath(a.Path)
 		}
-		return fmt.Sprintf("%s (%d 处修改)", shortPath(a.Path), n)
+		return i18n.Tf("tui.tool.editSummary", shortPath(a.Path), n)
 	case "ls":
 		return shortPath(orDot(a.Path))
 	case "grep":
@@ -269,7 +270,7 @@ func hang(lines []string, style func(string) lipgloss.Style, w, maxVis int) []st
 		}
 	}
 	if hidden > 0 {
-		out = append(out, gutterPad+dimStyle.Render(fmt.Sprintf("… 还有 %d 行", hidden)))
+		out = append(out, gutterPad+dimStyle.Render(i18n.Tf("tui.tool.moreLines", hidden)))
 	}
 	return out
 }
@@ -293,11 +294,11 @@ func errExcerpt(msg string, w int) []string {
 		tight = append(tight, l)
 	}
 	if len(tight) == 0 {
-		tight = []string{"(无错误输出)"}
+		tight = []string{i18n.T("tui.tool.noErrOutput")}
 	}
 	if len(tight) > errExcerptMax {
 		tight = append(tight[:errExcerptMax:errExcerptMax],
-			fmt.Sprintf("… 还有 %d 行", len(tight)-errExcerptMax))
+			i18n.Tf("tui.tool.moreLines", len(tight)-errExcerptMax))
 	}
 	var out []string
 	for i, l := range tight {

@@ -7,12 +7,23 @@ import (
 	"strings"
 
 	"scode/internal/agent"
+	"scode/internal/i18n"
 	"scode/internal/llm"
 	"scode/internal/tools"
 )
 
 // ToolName is the permanently registered delegation tool.
 const ToolName = "task"
+
+// ReportFooterPrefix opens the delegate report's trailing stats line.
+// The footer rides the TOOL RESULT (model-facing), so it stays English
+// and stable — the TUI's preview filter (tui.taskReportPreview) keys on
+// this exact prefix to skip the line.
+const ReportFooterPrefix = "(sub-agent "
+
+// noReportText is the stand-in when the delegate ended without text
+// (model-facing, see ReportFooterPrefix).
+const noReportText = "(the sub-agent produced no text report)"
 
 // Host is the host seam: everything the engine needs from cli, with
 // nothing shared mutable — parallel task calls each resolve their own
@@ -144,7 +155,7 @@ func (t *TaskTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.Too
 			progress(fmt.Sprintf("%s · %s", spec.Name, line))
 		}
 	}
-	say(fmt.Sprintf("启动 · 模型 %s", modelID))
+	say(i18n.Tf("tui.tool.progressStart", modelID))
 
 	ctx, cancel := context.WithCancel(tc.Ctx)
 	defer cancel()
@@ -162,7 +173,7 @@ func (t *TaskTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.Too
 		case agent.EvToolStart:
 			calls++
 			if ev.Call != nil {
-				say(fmt.Sprintf("第 %d 步 · %s", turns, briefTool(ev.Call.Name, ev.Call.Arguments)))
+				say(i18n.Tf("tui.tool.progressStep", turns, briefTool(ev.Call.Name, ev.Call.Arguments)))
 			}
 		case agent.EvAssistant:
 			// The final text of the LAST assistant message is the report.
@@ -191,10 +202,10 @@ func (t *TaskTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.Too
 		return agent.ErrorResult(fmt.Sprintf("sub-agent %q failed: %v", spec.Name, err))
 	}
 
-	footer := fmt.Sprintf("(子代理 %s · %d 轮 · %d 次工具调用 · 模型 %s)", spec.Name, turns, calls, modelID)
+	footer := fmt.Sprintf("%s%s · %d turns · %d tool calls · model %s)", ReportFooterPrefix, spec.Name, turns, calls, modelID)
 	text := strings.TrimSpace(report.String())
 	if text == "" {
-		text = "(子代理未产出文本报告)"
+		text = noReportText
 	}
 	return agent.TextResult(text + "\n\n" + footer)
 }

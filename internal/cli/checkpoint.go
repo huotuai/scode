@@ -16,6 +16,7 @@ import (
 
 	"scode/internal/agent"
 	"scode/internal/checkpoint"
+	"scode/internal/i18n"
 	"scode/internal/llm"
 )
 
@@ -87,21 +88,20 @@ func (a *App) CheckpointRestore(id string) (int, error) {
 func (a *App) CheckpointListText() string {
 	cps := a.Checkpoints()
 	if len(cps) == 0 {
-		return "暂无检查点 — AI 的 edit/write 修改会自动留档(可用 /config 关闭)"
+		return i18n.T("cli.checkpoint.none")
 	}
 	rows := make([]string, 0, len(cps))
 	for _, cp := range cps {
-		files := "1 个文件"
+		files := i18n.T("tui.rewind.oneFile")
 		if len(cp.Files) != 1 {
-			files = fmt.Sprintf("%d 个文件", len(cp.Files))
+			files = i18n.Tf("tui.rewind.nFiles", len(cp.Files))
 		}
 		if n := tooLargeCount(cp); n > 0 {
-			files += fmt.Sprintf(",%d 个过大未留档", n)
+			files += i18n.Tf("tui.rewind.tooLarge", n)
 		}
 		rows = append(rows, fmt.Sprintf("  %s · %s · %s · %s", cp.ID, cp.Time.Format("15:04:05"), cp.Tool, cp.Summary+" ("+files+")"))
 	}
-	return "检查点 (新→旧):\n" + strings.Join(rows, "\n") +
-		"\n/rewind <id> 或 /rewind last 恢复文件到该时点(仅回滚文件,不回滚对话)"
+	return i18n.Tf("cli.checkpoint.list", strings.Join(rows, "\n"))
 }
 
 // tooLargeCount counts the checkpoint's over-cap (unarchived) files.
@@ -119,7 +119,7 @@ func tooLargeCount(cp checkpoint.Checkpoint) int {
 func (a *App) CheckpointRestoreText(arg string) string {
 	cps := a.Checkpoints()
 	if len(cps) == 0 {
-		return "暂无检查点"
+		return i18n.T("cli.checkpoint.noneShort")
 	}
 	id := strings.TrimSpace(arg)
 	if id == "last" || id == "" {
@@ -129,5 +129,5 @@ func (a *App) CheckpointRestoreText(arg string) string {
 	if err != nil {
 		return "rewind: " + err.Error()
 	}
-	return fmt.Sprintf("已回滚到检查点 %s · 恢复 %d 个文件(对话不受影响)", id, n)
+	return i18n.Tf("cli.checkpoint.restored", id, n)
 }

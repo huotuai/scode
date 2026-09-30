@@ -18,6 +18,7 @@ import (
 	"scode/internal/checkpoint"
 	"scode/internal/cli"
 	"scode/internal/config"
+	"scode/internal/i18n"
 	"scode/internal/llm"
 	"scode/internal/memory"
 	"scode/internal/plantrack"
@@ -240,7 +241,7 @@ type model struct {
 func newModel(app *cli.App, ui chan any) model {
 	ta := textarea.New()
 	ta.Prompt = "> "
-	ta.Placeholder = "输入消息… (Enter 发送 · ctrl+j 换行 · alt+v 图片 · / 命令)"
+	ta.Placeholder = i18n.T("tui.main.placeholder")
 	ta.ShowLineNumbers = false
 	ta.DynamicHeight = true
 	ta.MinHeight = 1
@@ -517,10 +518,10 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.scrollPlan(m.planPage(k))
 				return m, nil
 			case "left", "shift+tab":
-				m.planBtn = (m.planBtn - 1 + len(planButtons)) % len(planButtons)
+				m.planBtn = (m.planBtn - 1 + len(planButtons())) % len(planButtons())
 				return m, nil
 			case "right", "tab":
-				m.planBtn = (m.planBtn + 1) % len(planButtons)
+				m.planBtn = (m.planBtn + 1) % len(planButtons())
 				return m, nil
 			case "enter", "ctrl+m":
 				if strings.TrimSpace(m.input.Value()) == "" {
@@ -589,7 +590,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if disabled, path := m.picker.DidSelectDisabledFile(msg); disabled {
-			m.appendBlock(errStyle.Render("不可选择: " + path))
+			m.appendBlock(errStyle.Render(i18n.Tf("tui.main.notSelectable", path)))
 		}
 		return m, cmd
 	}
@@ -604,10 +605,10 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.resize()
 			return m, nil
 		case "up":
-			m.sandboxIdx = (m.sandboxIdx - 1 + len(sandboxModes)) % len(sandboxModes)
+			m.sandboxIdx = (m.sandboxIdx - 1 + len(sandboxModes())) % len(sandboxModes())
 			return m, nil
 		case "down":
-			m.sandboxIdx = (m.sandboxIdx + 1) % len(sandboxModes)
+			m.sandboxIdx = (m.sandboxIdx + 1) % len(sandboxModes())
 			return m, nil
 		case "enter", "ctrl+m":
 			m.applySandbox(m.sandboxIdx)
@@ -740,7 +741,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		tick := m.armClipLoop()
-		m.appendBlock(dimStyle.Render(fmt.Sprintf("(剪贴板图片监控中：%d 秒内截屏或复制图片将自动附加；再次按 alt+v / ctrl+v 重新计时)", int(clipLoopWindow/time.Second))))
+		m.appendBlock(dimStyle.Render(i18n.Tf("tui.main.clipWatch", int(clipLoopWindow/time.Second))))
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		m.updatePalette()
@@ -881,7 +882,7 @@ func (m *model) answerPlanButton() {
 	case 1:
 		fb := strings.TrimSpace(m.input.Value())
 		if fb == "" {
-			fb = "请修订该计划"
+			fb = i18n.T("tui.render.planDefaultFeedback")
 		}
 		ans = "feedback:" + fb
 		m.input.Reset()
@@ -889,7 +890,7 @@ func (m *model) answerPlanButton() {
 		ans = "n"
 	}
 	m.pending.answer <- ans
-	m.appendBlock(dimStyle.Render(fmt.Sprintf("(计划确认: %s)", planButtons[m.planBtn])))
+	m.appendBlock(dimStyle.Render(i18n.Tf("tui.render.planEcho", planButtons()[m.planBtn])))
 	m.pending = nil
 	m.resize()
 }
@@ -1000,7 +1001,7 @@ func (m *model) runCommand(line string) {
 	// banner (TUI-interactive; the REPL gets a notice via App.Command).
 	if line == "/new" {
 		if m.running {
-			m.appendBlock(noteLine("运行中无法开始新会话"))
+			m.appendBlock(noteLine(i18n.T("tui.main.noNewSessionWhileRunning")))
 			return
 		}
 		m.newSession()
@@ -1009,7 +1010,7 @@ func (m *model) runCommand(line string) {
 	// /sandbox is TUI-only (the mode picker overlay lives here).
 	if line == "/sandbox" {
 		if m.running {
-			m.appendBlock(noteLine("运行中无法切换沙箱"))
+			m.appendBlock(noteLine(i18n.T("tui.main.noSandboxWhileRunning")))
 			return
 		}
 		m.openSandbox()
@@ -1062,7 +1063,7 @@ func (m *model) runCommand(line string) {
 	// through to App.Command and switches directly.
 	if line == "/model" {
 		if m.running {
-			m.appendBlock(noteLine("运行中无法切换模型"))
+			m.appendBlock(noteLine(i18n.T("tui.main.noModelWhileRunning")))
 			return
 		}
 		m.openModelPicker()
@@ -1072,7 +1073,7 @@ func (m *model) runCommand(line string) {
 	// here); the REPL prints the catalog through App.Command instead.
 	if line == "/models" {
 		if m.running {
-			m.appendBlock(noteLine("运行中无法配置模型"))
+			m.appendBlock(noteLine(i18n.T("tui.main.noModelCfgWhileRunning")))
 			return
 		}
 		m.openModelManager()
@@ -1114,7 +1115,7 @@ func (m *model) newSession() {
 	prov, modelID := m.app.CurrentModel()
 	m.appendBlock(welcomeBanner(prov, modelID, m.app.CWD, newID))
 	m.addSpacer()
-	m.appendBlock(noteLine("新会话已开始 — 原会话恢复: scode --resume " + oldID))
+	m.appendBlock(noteLine(i18n.Tf("tui.main.newSessionStarted", oldID)))
 	m.refreshUsage()
 }
 
@@ -1245,9 +1246,9 @@ func (m *model) copySelection() tea.Cmd {
 		return nil
 	}
 	if !writeClipboardTextFn(text) {
-		return m.showToast("复制失败：无法写入剪贴板")
+		return m.showToast(i18n.T("tui.main.copyFail"))
 	}
-	return m.showToast(fmt.Sprintf("已复制 %d 行", strings.Count(text, "\n")+1))
+	return m.showToast(i18n.Tf("tui.main.copiedLines", strings.Count(text, "\n")+1))
 }
 
 // toastInfo is one transient top-right notification.
@@ -1414,7 +1415,7 @@ func (m *model) renderEvent(ev agent.Event) {
 		if ev.Result.IsError {
 			msg := resultText(ev.Result)
 			if msg == "" {
-				msg = capitalize(ev.Call.Name) + " 失败"
+				msg = i18n.Tf("tui.main.toolFailed", capitalize(ev.Call.Name))
 			}
 			// Multi-line shell errors (Windows cmd's especially) render as
 			// a hanging-indented excerpt — never a single line whose
