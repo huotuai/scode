@@ -64,8 +64,8 @@ scode version         # 显示版本号 + 是否最新
 ```sh
 git clone https://github.com/huotuai/scode.git
 cd scode
-build.bat        # Windows：版本戳构建到 dist/scode.exe
-./build.sh       # Linux / macOS
+go build -ldflags "-X main.version=$(git rev-parse --short HEAD)" -o dist/scode.exe ./cmd/scode   # Windows
+go build -ldflags "-X main.version=$(git rev-parse --short HEAD)" -o dist/scode ./cmd/scode        # Linux / macOS
 ```
 
 ## 快速上手
@@ -191,7 +191,6 @@ desktop/         Electron + React 桌面客户端
 go build ./...     # 编译检查
 go test ./...      # 全部测试
 go vet ./...       # 静态检查
-package.bat v0.1.0 # 打包发布产物 dist/scode-windows-amd64.zip + checksums.txt
 ```
 
 诊断：`SCODE_DEBUG_REQ=1` 转储请求体，`SCODE_DEBUG_SSE=1` 转储流式响应。
