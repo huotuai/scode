@@ -57,6 +57,8 @@ type toolArgs struct {
 	Command string `json:"command"`
 	Path    string `json:"path"`
 	Pattern string `json:"pattern"`
+	URL     string `json:"url"`
+	Query   string `json:"query"`
 	Offset  int    `json:"offset"`
 	Limit   int    `json:"limit"`
 	Content string `json:"content"`
@@ -123,6 +125,10 @@ func toolSummary(name string, raw []byte) string {
 		return s
 	case subagent.ToolName:
 		return "「" + truncateRunes(oneLine(a.Prompt), 56) + "」"
+	case "web_fetch":
+		return truncateRunes(oneLine(a.URL), 96)
+	case "web_search":
+		return "🔎 " + truncateRunes(oneLine(a.Query), 92)
 	}
 	return briefArgs(raw)
 }
@@ -146,7 +152,7 @@ func toolDetail(name string, raw []byte, res *agent.ToolResult, width int) []str
 		return diffPreview(editDiff(text), w)
 	case "write":
 		return contentPreview(a.Content, w)
-	case "bash", "read", "ls", "grep", "find":
+	case "bash", "read", "ls", "grep", "find", "web_fetch", "web_search":
 		return outputPreview(text, w)
 	case subagent.ToolName:
 		// The delegate's report preview: the first finding line (the

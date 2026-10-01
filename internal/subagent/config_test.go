@@ -33,8 +33,8 @@ func TestSpecValidate(t *testing.T) {
 func TestAllMergesBuiltins(t *testing.T) {
 	// Empty file: the built-in is the whole surface.
 	merged := All(nil)
-	if len(merged) != 2 || merged[0].Name != "Explore" || merged[1].Name != "general-purpose" ||
-		!IsBuiltin("Explore") || !IsBuiltin("general-purpose") {
+	if len(merged) != 2 || merged[0].Name != "explore" || merged[1].Name != "general-purpose" ||
+		!IsBuiltin("explore") || !IsBuiltin("general-purpose") {
 		t.Fatalf("built-in surface = %+v", merged)
 	}
 	if IsBuiltin("researcher") {
@@ -50,7 +50,7 @@ func TestAllMergesBuiltins(t *testing.T) {
 	if len(merged) != 3 {
 		t.Fatalf("merged = %+v", merged)
 	}
-	if merged[0].Name != "Explore" {
+	if merged[0].Name != "explore" {
 		t.Fatalf("built-in lost: %+v", merged[0])
 	}
 	if merged[1].Name != "general-purpose" || merged[1].Model != "openai-compat:m2" {

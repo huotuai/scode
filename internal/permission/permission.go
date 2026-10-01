@@ -6,7 +6,8 @@
 // in deny → ask → allow order (first match wins per list); unmatched
 // calls fall through to the mode default. The pattern domain depends on
 // the tool: bash matches the command string, file tools match the path
-// (cwd-relative, doublestar ** supported), other tools match by name
+// (cwd-relative, doublestar ** supported), web_fetch matches the URL
+// host (a bare domain covers its subdomains), other tools match by name
 // only (tool-name globs cover MCP: "mcp__github__*").
 //
 // The engine is a pure evaluator: it never prompts and never touches
@@ -16,6 +17,7 @@ package permission
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 
@@ -247,6 +249,8 @@ func (r Rule) matches(cwd string, call llm.Block, blocking bool) bool {
 		return bashPatternMatches(r.Pattern, value, blocking)
 	case "path":
 		return pathPatternMatches(r.Pattern, value, cwd)
+	case "url":
+		return urlPatternMatches(r.Pattern, value)
 	default:
 		// The rule restricts arguments this tool does not expose —
 		// it can never match (name-only rules cover these tools).
@@ -279,11 +283,13 @@ func MatchPathGlob(pattern, argPath, cwd string) bool {
 }
 
 // matchTarget extracts the value a rule's pattern matches against:
-// bash → the command string; file tools → the path argument.
+// bash → the command string; file tools → the path argument;
+// web_fetch → the URL.
 func matchTarget(call llm.Block) (kind, value string) {
 	var args struct {
 		Command string `json:"command"`
 		Path    string `json:"path"`
+		URL     string `json:"url"`
 	}
 	_ = json.Unmarshal(call.Arguments, &args) // malformed args fail at validation; matching is best-effort
 	switch call.Name {
@@ -291,6 +297,8 @@ func matchTarget(call llm.Block) (kind, value string) {
 		return "bash", args.Command
 	case "write", "edit", "read", "ls", "find":
 		return "path", args.Path
+	case "web_fetch":
+		return "url", args.URL
 	default:
 		return "", ""
 	}
@@ -388,6 +396,41 @@ func pathPatternMatches(pattern, argPath, cwd string) bool {
 	return false
 }
 
+// urlPatternMatches matches a web_fetch rule against the call's URL
+// host (Claude Code's domain-list semantics): "*" matches everything; a
+// bare domain covers its subdomains ("github.com" allows
+// "api.github.com"); doublestar globs ("*.internal.com") work, with
+// "*.example.com" also covering the apex. A pattern written as a full
+// URL is reduced to its host. Ports and paths never participate.
+func urlPatternMatches(pattern, rawURL string) bool {
+	if pattern == "*" {
+		return true
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	if strings.Contains(pattern, "://") {
+		pu, perr := url.Parse(pattern)
+		if perr != nil || pu.Hostname() == "" {
+			return false
+		}
+		pattern = pu.Hostname()
+	}
+	if pattern == host {
+		return true
+	}
+	if strings.ContainsAny(pattern, "*?") {
+		if ok, _ := doublestar.Match(pattern, host); ok {
+			return true
+		}
+		return strings.HasPrefix(pattern, "*.") && host == pattern[2:]
+	}
+	return strings.HasSuffix(host, "."+pattern)
+}
+
 // ExactRule renders the precise rule covering this call — the shape the
 // 'a'/'p' approval keys remember. Deliberately NOT generalized
 // (approving "git status" writes bash(git status), never bash(git:*)).
@@ -409,6 +452,13 @@ func ExactRule(cwd string, call llm.Block) string {
 			}
 		}
 		return fmt.Sprintf("%s(%s)", call.Name, filepath.ToSlash(value))
+	case "url":
+		// Remember the host, not the full URL: approving one page
+		// green-lights the domain (the match semantics above).
+		if u, err := url.Parse(value); err == nil && u.Hostname() != "" {
+			return fmt.Sprintf("%s(%s)", call.Name, strings.ToLower(u.Hostname()))
+		}
+		return call.Name
 	default:
 		return call.Name
 	}

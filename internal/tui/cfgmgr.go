@@ -39,6 +39,7 @@ func cfgItems() []cfgItem {
 		{id: "rewind", label: i18n.T("tui.config.rewind.label"), desc: i18n.T("tui.config.rewind.desc")},
 		{id: "clipWatch", label: i18n.T("tui.config.clipWatch.label"), desc: i18n.T("tui.config.clipWatch.desc")},
 		{id: "language", label: i18n.T("tui.config.language.label"), desc: i18n.T("tui.config.language.desc")},
+		{id: "searchProvider", label: i18n.T("tui.config.searchProvider.label"), desc: i18n.T("tui.config.searchProvider.desc")},
 	}
 }
 
@@ -109,6 +110,10 @@ func (m model) cfgActivate() (tea.Model, tea.Cmd) {
 			}
 			m.cfgSnapshot = m.app.TUIConfig()
 		}
+	case "searchProvider":
+		// Cycle duckduckgo → brave → tavily; the web tools read the
+		// freshest settings per call, so the switch is live at once.
+		err = m.app.SetSearchProvider(cfgNextSearchProvider(m.cfgSnapshot.SearchProvider))
 	}
 	if err != nil {
 		return m, m.showToast("config: " + err.Error())
@@ -126,6 +131,18 @@ func cfgNextLanguage(cur string) string {
 		return "en"
 	}
 	return ""
+}
+
+// cfgNextSearchProvider cycles the web_search backend, wrapping
+// unknown values (hand-edited settings) back to the default.
+func cfgNextSearchProvider(cur string) string {
+	switch cur {
+	case "duckduckgo", "":
+		return "brave"
+	case "brave":
+		return "tavily"
+	}
+	return "duckduckgo"
 }
 
 // cfgNextRetention walks the preset cycle, wrapping unknown values
@@ -173,6 +190,8 @@ func (m *model) configView() string {
 			return onOff(c.ClipboardWatch)
 		case "language":
 			return cli.LanguageLabel(c.Language), false
+		case "searchProvider":
+			return c.SearchProvider, false
 		}
 		return "", false
 	}

@@ -163,7 +163,7 @@ func (s *Supervisor) settleReady(err error) {
 // watcher owns the post-connect lifecycle.
 func (s *Supervisor) connectGeneration() error {
 	client := mcpsdk.NewClient(
-		&mcpsdk.Implementation{Name: "scode-mcp", Version: "0.1.0"},
+		&mcpsdk.Implementation{Name: "scode-mcp", Version: "0.1.1"},
 		&mcpsdk.ClientOptions{
 			ToolListChangedHandler: func(context.Context, *mcpsdk.ToolListChangedRequest) {
 				s.onToolListChanged()

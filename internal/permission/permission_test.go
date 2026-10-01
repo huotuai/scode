@@ -254,3 +254,57 @@ func TestRemoveDefault(t *testing.T) {
 	e.RemoveDefault("mcp__x__*") // idempotent
 	e.RemoveDefault("mcp__other__*")
 }
+
+// web_fetch rules match the URL host: a bare domain covers its
+// subdomains, globs work, ports/paths are ignored, and a bare-domain
+// rule must not be fooled by a suffix attack (github.com.evil.example).
+func TestWebFetchURLMatching(t *testing.T) {
+	e := mustEngine(t, "", "",
+		[]string{`web_fetch(github.com)`},
+		[]string{`web_fetch(*.internal.example)`},
+		[]string{`web_fetch(malware.example)`})
+	cases := []struct {
+		url  string
+		want Decision
+	}{
+		{"https://github.com/njzhenghao/SCode", Allow},
+		{"https://api.github.com/repos/x", Allow},      // subdomain of the allow rule
+		{"https://GITHUB.com:443/x?q=1", Allow},        // case/port-insensitive
+		{"https://malware.example/payload", Deny},      // deny wins
+		{"https://cdn.malware.example/x", Deny},        // deny covers subdomains too
+		{"https://db.internal.example/", Ask},          // glob ask rule
+		{"https://internal.example/", Ask},             // "*.x" also covers the apex
+		{"https://github.com.evil.example/phish", Allow}, // suffix attack: no rule matches (ModeDefault)
+		{"not-a-url", Allow},                           // unparseable: no pattern rule can match
+	}
+	for _, c := range cases {
+		dec, _ := e.Evaluate(call("web_fetch", map[string]any{"url": c.url}))
+		if dec != c.want {
+			t.Errorf("%s: got %v, want %v", c.url, dec, c.want)
+		}
+	}
+
+	// web_search has no pattern domain: a patterned rule never matches,
+	// a name-only rule does.
+	e2 := mustEngine(t, "", "", nil, []string{`web_search`}, []string{`web_search(golang)`})
+	if dec, _ := e2.Evaluate(call("web_search", map[string]any{"query": "golang"})); dec != Ask {
+		t.Errorf("name-only web_search rule should ask, got %v", dec)
+	}
+	if dec, _ := e2.Evaluate(call("web_fetch", map[string]any{"url": "https://x.example"})); dec != Allow {
+		t.Errorf("web_fetch unaffected by web_search rules, got %v", dec)
+	}
+}
+
+func TestExactRuleWebFetch(t *testing.T) {
+	got := ExactRule("", call("web_fetch", map[string]any{"url": "https://API.GitHub.com:443/repos/x?y=1"}))
+	if got != "web_fetch(api.github.com)" {
+		t.Errorf("web_fetch exact should remember the host: %q", got)
+	}
+	if got := ExactRule("", call("web_fetch", map[string]any{"url": "::bad::"})); got != "web_fetch" {
+		t.Errorf("unparseable url falls back to the bare name: %q", got)
+	}
+	kind, value := CallSummary(call("web_fetch", map[string]any{"url": "https://a.b/c"}))
+	if kind != "url" || value != "https://a.b/c" {
+		t.Errorf("CallSummary = %q %q", kind, value)
+	}
+}

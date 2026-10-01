@@ -69,7 +69,7 @@ func BuiltinSpecs() []Spec {
 			Description: "General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks.",
 		},
 		{
-			Name:        "Explore",
+			Name:        "explore",
 			Description: "Read-only search agent for broad fan-out searches: locate code, map structure, gather evidence across many files.",
 		},
 	}

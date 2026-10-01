@@ -221,6 +221,12 @@ func Setup(opts Options) (*App, error) {
 	// declarations in the leading system message — providers read them
 	// from the transcript, so they must be attached here.
 	registry := tools.NewCodingRegistry()
+	// web_fetch / web_search get live access to the settings web
+	// section (search backend, private-network gate) plus the env API
+	// keys; Add replaces the zero-config defaults in place, keeping
+	// the declaration order (and the provider prefix cache) stable.
+	registry.Add(tools.WebFetchTool{Config: webConfigResolver(settings)})
+	registry.Add(tools.WebSearchTool{Config: webConfigResolver(settings)})
 	// exit_plan_mode is permanently registered (dsh: entering or leaving
 	// plan mode changes only the prompt section, not the tool catalog).
 	registry.Add(planmode.NewExitTool(a.planCtl, reviewer))
@@ -517,6 +523,28 @@ func Setup(opts Options) (*App, error) {
 	return a, nil
 }
 
+// webConfigResolver binds the web tools to the freshest settings
+// (reloaded per call, so /config panel edits apply mid-session; the
+// setup snapshot is the read-failure fallback) plus the env-held
+// search API keys (keys never live in settings.json).
+func webConfigResolver(snapshot *config.Settings) func() tools.WebConfig {
+	return func() tools.WebConfig {
+		s, err := config.LoadSettings()
+		if err != nil || s == nil {
+			s = snapshot
+		}
+		c := tools.WebConfig{
+			BraveAPIKey:  os.Getenv("BRAVE_API_KEY"),
+			TavilyAPIKey: os.Getenv("TAVILY_API_KEY"),
+		}
+		if s != nil && s.Web != nil {
+			c.SearchProvider = s.Web.SearchProvider
+			c.AllowPrivateNetwork = s.Web.AllowPrivate()
+		}
+		return c
+	}
+}
+
 // buildPermissionEngine merges user-level and project-level
 // permissions (project lists append after user lists) into the engine.
 func buildPermissionEngine(cwd string, user, proj *config.Settings) (*permission.Engine, error) {
@@ -672,6 +700,7 @@ type TUIConfig struct {
 	RewindCheckpoints bool
 	ClipboardWatch    bool
 	Language          string // "" = system (auto-detect)
+	SearchProvider    string // web_search backend (duckduckgo default)
 }
 
 // TUIConfig reads the panel state from the freshest settings (falls
@@ -694,7 +723,17 @@ func (a *App) TUIConfig() TUIConfig {
 		RewindCheckpoints: s.RewindCheckpointsOn(),
 		ClipboardWatch:    s.ClipboardWatch == nil || *s.ClipboardWatch,
 		Language:          s.Language,
+		SearchProvider:    searchProviderOf(s),
 	}
+}
+
+// searchProviderOf resolves the configured web_search backend with
+// the duckduckgo default applied.
+func searchProviderOf(s *config.Settings) string {
+	if s.Web != nil && s.Web.SearchProvider != "" {
+		return s.Web.SearchProvider
+	}
+	return "duckduckgo"
 }
 
 // SetAutoCompact persists the toggle and applies it live: off parks the
@@ -749,6 +788,13 @@ func (a *App) SetLanguage(lang string) error {
 	return config.SetTUIConfigKey("language", v)
 }
 
+// SetSearchProvider persists the web_search backend ("" = duckduckgo
+// default). Live without any extra wiring: the web tools resolve
+// their config from the freshest settings per call.
+func (a *App) SetSearchProvider(provider string) error {
+	return config.SetWebSearchProvider(provider)
+}
+
 // ConfigListText renders the /config listing (REPL surface).
 func (a *App) ConfigListText() string {
 	c := a.TUIConfig()
@@ -765,7 +811,7 @@ func (a *App) ConfigListText() string {
 	return i18n.Tf("cli.run.configList",
 		onOff(c.AutoCompact), ret, onOff(c.AutoMemory), onOff(c.TypedMemory),
 		onOff(c.MemoryRelevance), onOff(c.MemoryAutoExtract), onOff(c.RewindCheckpoints),
-		onOff(c.ClipboardWatch), LanguageLabel(c.Language))
+		onOff(c.ClipboardWatch), LanguageLabel(c.Language), c.SearchProvider)
 }
 
 // LanguageLabel renders the language setting for the /config surfaces:

@@ -1,7 +1,7 @@
 {
   "name": "scode-desktop",
   "productName": "SCode",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "scode desktop client (Electron shell over `scode serve` stdio JSON-RPC)",
   "main": "src/main.js",

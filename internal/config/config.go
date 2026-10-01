@@ -55,6 +55,7 @@ type Settings struct {
 	Permissions          *Permissions              `json:"permissions,omitempty"`          // tool-call rules (design: docs/design-permission-plan-desktop.md)
 	Sandbox              *SandboxConfig            `json:"sandbox,omitempty"`              // file-effect sandbox default (dsh sandbox-policy port)
 	Retry                *RetrySettings            `json:"retry,omitempty"`                // pi's settings.retry
+	Web                  *WebSettings              `json:"web,omitempty"`                  // web_fetch / web_search knobs
 	ClipboardWatch       *bool                     `json:"clipboardWatch,omitempty"`       // TUI: auto-attach clipboard images (terminals that swallow ctrl+v); default true
 	UpdateRepo           string                    `json:"updateRepo,omitempty"`           // GitHub "org/repo" release source for scode update (env SCODE_UPDATE_REPO overrides)
 	UpdateCheck          *bool                     `json:"updateCheck,omitempty"`          // background new-version notice; default on
@@ -178,6 +179,19 @@ func AddProjectAllowRule(cwd, rule string) error {
 	return os.WriteFile(path, append(b, '\n'), 0o644)
 }
 
+// WebSettings mirrors the web section: the web_search backend and the
+// web_fetch private-network gate. API keys for the key-backed search
+// providers come from the environment (BRAVE_API_KEY / TAVILY_API_KEY),
+// never from this file.
+type WebSettings struct {
+	SearchProvider      string `json:"searchProvider,omitempty"`      // duckduckgo (default) | brave | tavily
+	AllowPrivateNetwork *bool  `json:"allowPrivateNetwork,omitempty"` // web_fetch may reach private/loopback/metadata addresses; default false
+}
+
+// AllowPrivate reports whether web_fetch may dial private networks.
+func (w *WebSettings) AllowPrivate() bool {
+	return w != nil && w.AllowPrivateNetwork != nil && *w.AllowPrivateNetwork
+}
 // RetrySettings mirrors pi's settings.retry.
 type RetrySettings struct {
 	Enabled         *bool                  `json:"enabled,omitempty"`         // default true
@@ -379,6 +393,42 @@ func SetTUIConfigKey(key string, value any) error {
 		delete(doc, key)
 	} else {
 		doc[key] = value
+	}
+	return writeSettingsDoc(doc)
+}
+
+// webSearchProviders are the backends the /config panel cycles.
+var webSearchProviders = []string{"duckduckgo", "brave", "tavily"}
+
+// SetWebSearchProvider persists the web_search backend choice into the
+// web section ("" deletes the key = duckduckgo default). Map-level
+// read-modify-write keeps unknown keys; the section is created on
+// demand.
+func SetWebSearchProvider(provider string) error {
+	valid := provider == ""
+	for _, p := range webSearchProviders {
+		if p == provider {
+			valid = true
+		}
+	}
+	if !valid {
+		return fmt.Errorf("unknown search provider %q (want duckduckgo|brave|tavily)", provider)
+	}
+	doc, err := readSettingsDoc()
+	if err != nil {
+		return err
+	}
+	web, _ := doc["web"].(map[string]any)
+	if provider == "" {
+		if web != nil {
+			delete(web, "searchProvider")
+		}
+	} else {
+		if web == nil {
+			web = map[string]any{}
+			doc["web"] = web
+		}
+		web["searchProvider"] = provider
 	}
 	return writeSettingsDoc(doc)
 }

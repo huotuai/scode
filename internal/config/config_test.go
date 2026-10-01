@@ -327,3 +327,44 @@ func TestSetDefault(t *testing.T) {
 		t.Fatal("empty provider should be rejected")
 	}
 }
+
+// SetWebSearchProvider round-trips through the web section, preserves
+// unknown keys (top-level and in-section), validates values, and ""
+// deletes the key.
+func TestSetWebSearchProvider(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("SCODE_DIR", dir)
+	seed := `{"note":"keep","web":{"allowPrivateNetwork":true}}`
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetWebSearchProvider("brave"); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Web == nil || s.Web.SearchProvider != "brave" {
+		t.Fatalf("provider not persisted: %+v", s.Web)
+	}
+	if !s.Web.AllowPrivate() {
+		t.Fatal("existing web section keys dropped")
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if !strings.Contains(string(data), `"note": "keep"`) {
+		t.Fatal("unknown top-level key dropped")
+	}
+
+	if err := SetWebSearchProvider("bing"); err == nil {
+		t.Fatal("unknown provider accepted")
+	}
+	if err := SetWebSearchProvider(""); err != nil {
+		t.Fatal(err)
+	}
+	s, _ = LoadSettings()
+	if s.Web != nil && s.Web.SearchProvider != "" {
+		t.Fatalf("reset left %q", s.Web.SearchProvider)
+	}
+}

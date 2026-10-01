@@ -138,10 +138,59 @@ func TestConfigListText(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"上下文自动压缩", "日志清理周期", "Auto Memory", "Typed Memory",
-		"Memory Relevance", "Memory Auto Extraction", "Rewind code", "剪贴板图片读取", "永不清理"} {
+		"Memory Relevance", "Memory Auto Extraction", "Rewind code", "剪贴板图片读取", "永不清理",
+		"网络搜索引擎", "duckduckgo"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("listing missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// Search provider: the /config setter persists into the web section,
+// the snapshot reflects it, and the web tools' per-call resolver sees
+// the switch live (it reloads settings, not the setup snapshot).
+func TestSearchProviderToggle(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chatSSE(w, "reply", 10)
+	}))
+	defer srv.Close()
+	setupTestApp(t, srv)
+	app, err := Setup(Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close() //nolint:errcheck
+
+	// Default: duckduckgo, nothing persisted.
+	if got := app.TUIConfig().SearchProvider; got != "duckduckgo" {
+		t.Fatalf("default provider = %q", got)
+	}
+	resolve := webConfigResolver(app.Settings)
+	if got := resolve().SearchProvider; got != "" {
+		t.Fatalf("resolver default = %q (empty = duckduckgo)", got)
+	}
+
+	if err := app.SetSearchProvider("brave"); err != nil {
+		t.Fatal(err)
+	}
+	if got := app.TUIConfig().SearchProvider; got != "brave" {
+		t.Fatalf("persisted provider = %q", got)
+	}
+	// Live effect: the already-wired resolver picks the change up
+	// without re-setup.
+	if got := resolve().SearchProvider; got != "brave" {
+		t.Fatalf("resolver did not go live: %q", got)
+	}
+
+	// Invalid values are rejected; "" deletes the key (back to default).
+	if err := app.SetSearchProvider("bing"); err == nil {
+		t.Fatal("unknown provider accepted")
+	}
+	if err := app.SetSearchProvider(""); err != nil {
+		t.Fatal(err)
+	}
+	if got := app.TUIConfig().SearchProvider; got != "duckduckgo" {
+		t.Fatalf("reset provider = %q", got)
 	}
 }
 

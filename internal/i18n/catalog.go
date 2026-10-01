@@ -527,6 +527,14 @@ var catalog = map[string]Message{
 		En: "UI display language (SCODE_LANG overrides this setting).",
 		Zh: "界面显示语言(SCODE_LANG 环境变量优先于此设置)。",
 	},
+	"tui.config.searchProvider.label": {
+		En: "Web search engine",
+		Zh: "网络搜索引擎",
+	},
+	"tui.config.searchProvider.desc": {
+		En: "Backend for the web_search tool: duckduckgo needs no API key (scraping-based, may be unstable); brave/tavily are higher quality but need the BRAVE_API_KEY / TAVILY_API_KEY environment variable.",
+		Zh: "web_search 工具的后端:duckduckgo 无需 API key(网页抓取,可能不稳定);brave/tavily 质量更高,但需要 BRAVE_API_KEY / TAVILY_API_KEY 环境变量。",
+	},
 	"tui.config.langAuto": {
 		En: "system (%s)",
 		Zh: "跟随系统(%s)",
@@ -930,8 +938,8 @@ var catalog = map[string]Message{
 		Zh: "子代理 (%d):\n%s\n模型格式 provider:model(留空继承会话模型)· task 工具委派,子代理只读且完全隔离",
 	},
 	"cli.run.configList": {
-		En: "Configuration (in the TUI, /config opens the interactive panel):\n  Auto-compact context: %s\n  Log retention period: %s\n  Auto Memory: %s\n  Typed Memory: %s\n  Memory Relevance: %s\n  Memory Auto Extraction: %s\n  Rewind code (checkpoint rollback): %s\n  Clipboard image reading (ctrl+v): %s (single read on demand, zero calls at idle; when off the clipboard is never touched)\n  Interface language: %s",
-		Zh: "配置 (TUI 里 /config 打开面板交互修改):\n  上下文自动压缩: %s\n  日志清理周期: %s\n  Auto Memory(自动记忆): %s\n  Typed Memory(分类记忆): %s\n  Memory Relevance(记忆相关性选择): %s\n  Memory Auto Extraction(自动提取记忆): %s\n  Rewind code(检查点回滚): %s\n  剪贴板图片读取(ctrl+v): %s (按需单次读取,空闲时零调用;关闭后完全不触剪贴板)\n  界面语言: %s",
+		En: "Configuration (in the TUI, /config opens the interactive panel):\n  Auto-compact context: %s\n  Log retention period: %s\n  Auto Memory: %s\n  Typed Memory: %s\n  Memory Relevance: %s\n  Memory Auto Extraction: %s\n  Rewind code (checkpoint rollback): %s\n  Clipboard image reading (ctrl+v): %s (single read on demand, zero calls at idle; when off the clipboard is never touched)\n  Interface language: %s\n  Web search engine: %s",
+		Zh: "配置 (TUI 里 /config 打开面板交互修改):\n  上下文自动压缩: %s\n  日志清理周期: %s\n  Auto Memory(自动记忆): %s\n  Typed Memory(分类记忆): %s\n  Memory Relevance(记忆相关性选择): %s\n  Memory Auto Extraction(自动提取记忆): %s\n  Rewind code(检查点回滚): %s\n  剪贴板图片读取(ctrl+v): %s (按需单次读取,空闲时零调用;关闭后完全不触剪贴板)\n  界面语言: %s\n  网络搜索引擎: %s",
 	},
 	"cli.run.mcpState": {
 		En: "%s · %d tools",

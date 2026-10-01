@@ -37,7 +37,8 @@ func TestConfigPanelFlow(t *testing.T) {
 	}
 	view := plain(m.configView())
 	for _, want := range []string{"上下文自动压缩", "日志清理周期", "Auto Memory", "Typed Memory",
-		"Memory Relevance", "Memory Auto Extraction", "Rewind code", "剪贴板图片读取", "永不清理"} {
+		"Memory Relevance", "Memory Auto Extraction", "Rewind code", "剪贴板图片读取", "永不清理",
+		"网络搜索引擎"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("panel missing %q:\n%s", want, view)
 		}
@@ -110,6 +111,22 @@ func TestConfigPanelFlow(t *testing.T) {
 		t.Fatalf("language reset did not persist: %+v", again)
 	}
 	i18n.Set(baseline)
+
+	// Search provider row (last): cycles duckduckgo → brave → tavily
+	// → duckduckgo, persisting each step.
+	m = press(t, m, tea.KeyDown) // → searchProvider
+	if m.cfgSnapshot.SearchProvider != "duckduckgo" {
+		t.Fatalf("search provider default = %q", m.cfgSnapshot.SearchProvider)
+	}
+	for _, want := range []string{"brave", "tavily", "duckduckgo"} {
+		m = press(t, m, tea.KeyEnter)
+		if m.cfgSnapshot.SearchProvider != want {
+			t.Fatalf("search provider cycle = %q, want %q", m.cfgSnapshot.SearchProvider, want)
+		}
+	}
+	if again := app.TUIConfig(); again.SearchProvider != "duckduckgo" {
+		t.Fatalf("search provider cycle did not persist: %+v", again)
+	}
 
 	m = press(t, m, tea.KeyEscape)
 	if m.cfgOpen {

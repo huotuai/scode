@@ -13,7 +13,7 @@ import (
 
 // UserAgent identifies scode on provider HTTP requests; the version
 // tracks the app release (desktop/package.json).
-const UserAgent = "SCode/0.1.0"
+const UserAgent = "SCode/0.1.1"
 
 // RetryableStatus marks an HTTP response that warrants a retry.
 type RetryableStatus struct {
