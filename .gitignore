@@ -18,6 +18,9 @@ desktop/tmp-*.js
 # Volatile plan scratch from tooling
 .zcode/plans/
 
+# Local project settings (sandbox mode etc.) stay machine-local
+.scode/settings.json
+
 # Local progress/decision log stays out of the repo
 jindu.md
 .zcodeignore
