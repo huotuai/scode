@@ -59,12 +59,14 @@ func runPromptInteractive(ctx context.Context, app *App, r *Renderer, promptText
 			if app.approver.Route(line) {
 				continue
 			}
+			// Slash commands queue; $name skills and plain text steer.
+			// (The legacy /skill:name form steers too.)
 			if strings.HasPrefix(line, "/") && !strings.HasPrefix(line, "/skill:") {
 				pending = append(pending, line)
 				fmt.Fprintf(r.Err, "(queued command for after this run: %s)\n", line)
 				continue
 			}
-			// Steering expands /skill:name too (pi's _queueUserInput →
+			// Steering expands $name too (pi's _queueUserInput →
 			// _expandSkillCommand).
 			app.Steer(line)
 			fmt.Fprintf(r.Err, "(steered: %s)\n", truncateFor(line, 60))
@@ -184,10 +186,11 @@ func REPL(opts Options) error {
 		if line == "" {
 			continue
 		}
-		// /skill:name and the built-in prompt commands (/commit, ...) are
-		// NOT REPL commands — they flow to the prompt path and expand
-		// there (pi's agent-session.prompt). Every other "/" line is a
-		// REPL command.
+		// $name skill invocations and the built-in prompt commands
+		// (/commit, ...) are NOT REPL commands — they flow to the
+		// prompt path and expand there (pi's agent-session.prompt).
+		// Every other "/" line is a REPL command. (The legacy
+		// /skill:name spelling is excepted the same way.)
 		if line[0] == '/' && !strings.HasPrefix(line, "/skill:") && !IsPromptCommand(line) {
 			out, done, err := app.Command(line)
 			if out != "" {
@@ -235,7 +238,7 @@ func REPL(opts Options) error {
 }
 
 // Steer forwards a mid-run user line to the agent, expanding
-// /skill:name like the prompt path does (pi's _queueUserInput).
+// $name like the prompt path does (pi's _queueUserInput).
 func (a *App) Steer(line string) {
 	a.Agent.Steer(a.expandSkill(line))
 }

@@ -136,7 +136,7 @@ func (m *model) openAgentsManager() {
 func (m model) handleAgentsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
 	if k == "ctrl+c" {
-		return m, tea.Quit
+		return m.ctrlCQuit()
 	}
 	if m.agentsStage == agentsStageEdit {
 		return m.handleAgentsEditKey(msg, k)

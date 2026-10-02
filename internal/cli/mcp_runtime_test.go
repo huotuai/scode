@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -93,6 +94,100 @@ func waitForMCP(t *testing.T, what string, probe func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("timed out waiting for " + what)
+}
+
+// Non-blocking startup (pi: the first prompt does not wait for MCP
+// servers): Setup returns immediately with a server whose first
+// attempt is still in flight, the first-prompt wait is bounded by
+// startupWaitMs, and once the server connects its tools register
+// through the generation hooks — no restart.
+func TestMCPStartupNonBlocking(t *testing.T) {
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	orig := mcpTransportHook
+	t.Cleanup(func() { mcpTransportHook = orig })
+	mcpTransportHook = func(string) func() (mcpsdk.Transport, error) {
+		return func() (mcpsdk.Transport, error) {
+			<-release
+			clientT, serverT := mcpsdk.NewInMemoryTransports()
+			server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "slow-srv", Version: "0"}, nil)
+			server.AddTool(&mcpsdk.Tool{
+				Name:        "echo",
+				Description: "echo",
+				InputSchema: json.RawMessage(`{"type":"object"}`),
+			}, func(ctx context.Context, req *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+				return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "echo"}}}, nil
+			})
+			ctx, cancel := context.WithCancel(context.Background())
+			if _, err := server.Connect(ctx, serverT, nil); err != nil {
+				cancel()
+				return nil, err
+			}
+			_ = cancel
+			return clientT, nil
+		}
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	cfgDir := t.TempDir()
+	proj := t.TempDir()
+	settings := map[string]any{
+		"defaultProvider": "openai-compat",
+		"providers": map[string]any{
+			"openai-compat": map[string]any{"apiKey": "k", "baseUrl": srv.URL, "model": "m"},
+		},
+	}
+	sb, _ := json.Marshal(settings)
+	os.WriteFile(filepath.Join(cfgDir, "settings.json"), sb, 0o644)           //nolint:errcheck
+	os.WriteFile(filepath.Join(cfgDir, "mcp.json"), []byte(
+		`{"mcpServers":{"slow-srv":{"transport":"stdio","command":"unused"}},"startupWaitMs":300}`), 0o644) //nolint:errcheck
+	t.Setenv("SCODE_DIR", cfgDir)
+	t.Chdir(proj)
+
+	// Setup must not block on the in-flight first attempt (the old
+	// WaitReady would park here until the 60s connect budget).
+	type setupResult struct {
+		app *App
+		err error
+	}
+	done := make(chan setupResult, 1)
+	go func() {
+		app, err := Setup(Options{})
+		done <- setupResult{app, err}
+	}()
+	var app *App
+	select {
+	case res := <-done:
+		if res.err != nil {
+			t.Fatal(res.err)
+		}
+		app = res.app
+	case <-time.After(5 * time.Second):
+		t.Fatal("Setup blocked on a still-connecting MCP server")
+	}
+	t.Cleanup(func() { app.Close() }) //nolint:errcheck
+	t.Cleanup(unblock) // runs BEFORE Close: a blocked factory would hang Shutdown
+	if _, ok := app.mcpRegistry.Get("mcp__slow-srv__echo"); ok {
+		t.Fatal("the tool must not be registered while the server is still connecting")
+	}
+
+	// The first-prompt wait is bounded by startupWaitMs (300ms here).
+	start := time.Now()
+	app.awaitMCPStartup()
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("first-prompt wait exceeded startupWaitMs: %v", elapsed)
+	}
+
+	// Once the server connects, its tools register through the hooks.
+	unblock()
+	waitForMCP(t, "slow-srv tools", func() bool {
+		_, ok := app.mcpRegistry.Get("mcp__slow-srv__echo")
+		return ok
+	})
 }
 
 // Runtime add with no startup servers: the file gains the entry, the

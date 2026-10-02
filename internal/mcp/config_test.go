@@ -1,10 +1,12 @@
 package mcp
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadFileMissing(t *testing.T) {
@@ -176,5 +178,26 @@ func TestEnabledFlag(t *testing.T) {
 	}
 	if (&ServerConfig{Enabled: &on}).IsEnabled() != true {
 		t.Fatal("explicit true must enable")
+	}
+}
+
+// startupWaitMs resolves pi's budget: 0/absent = 10s default,
+// negative = no wait, positive = verbatim.
+func TestStartupWait(t *testing.T) {
+	if got := (&File{}).StartupWait(); got != DefaultStartupWaitMs*time.Millisecond {
+		t.Fatalf("default = %v", got)
+	}
+	if got := (&File{StartupWaitMs: -1}).StartupWait(); got != 0 {
+		t.Fatalf("negative = %v, want no wait", got)
+	}
+	if got := (&File{StartupWaitMs: 2500}).StartupWait(); got != 2500*time.Millisecond {
+		t.Fatalf("explicit = %v", got)
+	}
+	var f File
+	if err := json.Unmarshal([]byte(`{"mcpServers":{},"startupWaitMs":2500}`), &f); err != nil {
+		t.Fatal(err)
+	}
+	if f.StartupWait() != 2500*time.Millisecond {
+		t.Fatalf("parsed = %v", f.StartupWait())
 	}
 }

@@ -60,11 +60,13 @@ func (t *bridgeTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.T
 }
 
 // Manager owns every configured server's supervisor (dsh's plugin
-// registry): startup awaits every initial attempt, then the app reads
-// the discovered tools and instructions. Servers can be added, removed,
-// and restarted at runtime — Supervisor.Shutdown is one-way, so a
-// removed supervisor is disposed and dropped, and re-adding builds a
-// fresh one.
+// registry): startup is non-blocking — only failOnStartupError servers
+// are awaited (WaitReadyFatal), the rest connect in the background and
+// the session's first prompt gives them a bounded wait
+// (WaitReadyTimeout, pi's startupWaitMs). Servers can be added,
+// removed, and restarted at runtime — Supervisor.Shutdown is one-way,
+// so a removed supervisor is disposed and dropped, and re-adding
+// builds a fresh one.
 type Manager struct {
 	mu    sync.Mutex
 	sups  []*Supervisor
@@ -119,12 +121,20 @@ func (m *Manager) newSup(name string, cfg ServerConfig) (*Supervisor, error) {
 // in-memory SDK transports replace real stdio/http servers).
 type TransportHook func(name string) func() (mcpsdk.Transport, error)
 
-// SetTransportHook installs a transport factory override applied to
-// every supervisor this manager builds.
+// SetTransportHook installs a transport factory override: it applies
+// to every supervisor this manager builds AND retro-applies to the
+// initial supervisors (they read the factory per connection attempt).
+// Call before Start.
 func (m *Manager) SetTransportHook(hook TransportHook) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.transportHook = hook
+	for _, s := range m.sups {
+		s.transportFactory = nil
+		if hook != nil {
+			s.transportFactory = hook(s.name)
+		}
+	}
 }
 
 // snapshot copies the supervisor slice under the lock.
@@ -222,7 +232,7 @@ func (m *Manager) WaitReady() map[string]error {
 		wg.Add(1)
 		go func(s *Supervisor) {
 			defer wg.Done()
-			err := <-s.Ready()
+			err := s.AwaitReady()
 			mu.Lock()
 			out[s.name] = err
 			mu.Unlock()
@@ -230,6 +240,54 @@ func (m *Manager) WaitReady() map[string]error {
 	}
 	wg.Wait()
 	return out
+}
+
+// WaitReadyTimeout is WaitReady bounded by one absolute deadline (pi's
+// startupWaitMs wait before the first prompt): servers whose first
+// attempt settles within the budget return in ready; the rest are
+// listed pending (in server order) and keep connecting in the
+// background — their tools arrive through the generation hooks when
+// they connect. A zero budget collects only already-settled servers.
+func (m *Manager) WaitReadyTimeout(d time.Duration) (ready map[string]error, pending []string) {
+	ready = map[string]error{}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	expired := false
+	for _, s := range m.snapshot() {
+		if expired {
+			select {
+			case <-s.readyCh:
+				ready[s.name] = s.AwaitReady()
+			default:
+				pending = append(pending, s.name)
+			}
+			continue
+		}
+		select {
+		case <-s.readyCh:
+			ready[s.name] = s.AwaitReady()
+		case <-timer.C:
+			expired = true
+			pending = append(pending, s.name)
+		}
+	}
+	return ready, pending
+}
+
+// WaitReadyFatal blocks until the FIRST attempt of every server with
+// failOnStartupError settles and reports the first failure (dsh's
+// activation rejection). Servers without the flag are not awaited:
+// with the non-blocking startup they connect in the background.
+func (m *Manager) WaitReadyFatal() error {
+	for _, s := range m.snapshot() {
+		if !s.cfg.FailOnStartupError {
+			continue
+		}
+		if err := s.AwaitReady(); err != nil {
+			return fmt.Errorf("mcp(%s): initial connection or tool synchronization failed: %w", s.name, err)
+		}
+	}
+	return nil
 }
 
 // FatalStartupError reports the first ready error from a server with

@@ -33,7 +33,7 @@ func (m model) handleMemoryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
 	switch k {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.ctrlCQuit()
 	case "esc":
 		m.memOpen = false
 		m.resize()

@@ -75,6 +75,26 @@ func TestReadToolPaging(t *testing.T) {
 	}
 }
 
+func TestReadToolLineNumbers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	os.WriteFile(path, []byte("alpha\nbeta\ngamma\n"), 0o644) //nolint:errcheck
+
+	res := (ReadTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{
+		"path": "f.txt", "offset": 2,
+	}))
+	if res.IsError {
+		t.Fatal(blockText(res))
+	}
+	text := blockText(res)
+	if !strings.Contains(text, "2 | beta") || !strings.Contains(text, "3 | gamma") {
+		t.Fatalf("missing line-number prefixes: %q", text)
+	}
+	if strings.Contains(text, "1 | alpha") {
+		t.Fatalf("offset=2 must not show line 1: %q", text)
+	}
+}
+
 func TestReadToolMissing(t *testing.T) {
 	res := (ReadTool{}).Execute(agent.ToolContext{CWD: t.TempDir()}, mustArgs(t, map[string]any{"path": "nope.txt"}))
 	if !res.IsError {
@@ -290,6 +310,107 @@ func TestGrepToolLiteralAndCase(t *testing.T) {
 	text := blockText(res)
 	if strings.Count(text, "f.txt:") != 2 {
 		t.Fatalf("literal ignore-case matches = %q", text)
+	}
+}
+
+func TestGrepToolFilesOnly(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n// needle here\n"), 0o644) //nolint:errcheck
+	os.WriteFile(filepath.Join(dir, "b.go"), []byte("package b\n"), 0o644)                 //nolint:errcheck
+	os.MkdirAll(filepath.Join(dir, "sub"), 0o755)                                          //nolint:errcheck
+	os.WriteFile(filepath.Join(dir, "sub", "c.txt"), []byte("needle again\n"), 0o644)      //nolint:errcheck
+	os.WriteFile(filepath.Join(dir, "bin.dat"), []byte("needle\x00binary"), 0o644)         //nolint:errcheck
+
+	res := (GrepTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{
+		"pattern": "needle", "filesOnly": true,
+	}))
+	if res.IsError {
+		t.Fatal(blockText(res))
+	}
+	text := blockText(res)
+	if !strings.Contains(text, "a.go") || !strings.Contains(text, "sub/c.txt") {
+		t.Fatalf("expected matching files: %q", text)
+	}
+	if strings.Contains(text, "b.go") || strings.Contains(text, "bin.dat") {
+		t.Fatalf("non-matching or binary file listed: %q", text)
+	}
+	if strings.Contains(text, ": ") || strings.Contains(text, "> ") {
+		t.Fatalf("filesOnly must not emit match lines: %q", text)
+	}
+
+	// glob still applies in filesOnly mode.
+	res = (GrepTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{
+		"pattern": "needle", "filesOnly": true, "glob": "*.go",
+	}))
+	text = blockText(res)
+	if !strings.Contains(text, "a.go") || strings.Contains(text, "c.txt") {
+		t.Fatalf("glob not applied in filesOnly mode: %q", text)
+	}
+}
+
+func TestCodeMapToolGo(t *testing.T) {
+	dir := t.TempDir()
+	src := "package demo\n\nimport \"fmt\"\n\ntype Server struct {\n\tport int\n}\n\nfunc NewServer(port int) *Server {\n\treturn &Server{port: port}\n}\n\nfunc (s *Server) Start() error {\n\tfmt.Println(s.port)\n\treturn nil\n}\n\nfunc helper() {}\n"
+	os.WriteFile(filepath.Join(dir, "srv.go"), []byte(src), 0o644)         //nolint:errcheck
+	os.WriteFile(filepath.Join(dir, "readme.md"), []byte("# hi\n"), 0o644) //nolint:errcheck
+
+	res := (CodeMapTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{"path": "."}))
+	if res.IsError {
+		t.Fatal(blockText(res))
+	}
+	text := blockText(res)
+	for _, want := range []string{
+		"srv.go:",
+		"5: type Server struct",
+		"9: func NewServer(port int) *Server",
+		"13: func (s *Server) Start() error",
+		"18: func helper()",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("outline missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "readme.md") {
+		t.Fatalf("unsupported extension must be skipped:\n%s", text)
+	}
+	if strings.Contains(text, "import") {
+		t.Fatalf("imports must not appear in the outline:\n%s", text)
+	}
+}
+
+func TestCodeMapToolTSAndPy(t *testing.T) {
+	dir := t.TempDir()
+	ts := "import x from 'y';\n\nexport interface Config {\n\ta: number;\n}\n\nexport function run(c: Config): void {}\n\nconst helper = async () => {};\n\nfunction nested() {\n\tfunction inner() {}\n}\n"
+	os.WriteFile(filepath.Join(dir, "mod.ts"), []byte(ts), 0o644) //nolint:errcheck
+	py := "import os\n\nclass App:\n    def method(self):\n        pass\n\nasync def main():\n    pass\n\ndef _private():\n    pass\n"
+	os.WriteFile(filepath.Join(dir, "app.py"), []byte(py), 0o644) //nolint:errcheck
+
+	res := (CodeMapTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{}))
+	if res.IsError {
+		t.Fatal(blockText(res))
+	}
+	text := blockText(res)
+	for _, want := range []string{
+		"mod.ts:", "3: export interface Config", "7: export function run(c: Config): void {}",
+		"9: const helper = async () => {};",
+		"app.py:", "3: class App:", "7: async def main():", "10: def _private():",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("outline missing %q:\n%s", want, text)
+		}
+	}
+	// Nested declarations stay out (column-0 anchoring).
+	if strings.Contains(text, "inner()") || strings.Contains(text, "method(self)") {
+		t.Fatalf("nested symbols must not appear:\n%s", text)
+	}
+}
+
+func TestCodeMapToolSingleFileUnsupported(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.md"), []byte("# hi\n"), 0o644) //nolint:errcheck
+	res := (CodeMapTool{}).Execute(agent.ToolContext{CWD: dir}, mustArgs(t, map[string]any{"path": "x.md"}))
+	if !res.IsError {
+		t.Fatal("unsupported single file must error with guidance")
 	}
 }
 

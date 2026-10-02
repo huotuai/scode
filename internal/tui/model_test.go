@@ -468,6 +468,62 @@ func TestCtrlCAbortsDuringToolApproval(t *testing.T) {
 	}
 }
 
+// Double-ctrl+c quit guard: a single ctrl+c only arms the guard with a
+// hint toast; the session quits on the second press inside the window,
+// any other key or the expiry tick disarms it.
+func TestCtrlCTwiceQuits(t *testing.T) {
+	ctrlC := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+	m := newTestModel()
+
+	// First press: armed, no quit command, hint toast visible.
+	tm, cmd := m.handleKey(ctrlC)
+	m = tm.(model)
+	if cmd == nil {
+		t.Fatal("first ctrl+c should schedule the disarm tick")
+	}
+	if !m.quitArmed {
+		t.Fatal("first ctrl+c did not arm the quit guard")
+	}
+	if m.toast == nil || !strings.Contains(m.toast.text, "ctrl+c") {
+		t.Fatalf("confirm hint toast missing: %+v", m.toast)
+	}
+
+	// Another key disarms.
+	tm, _ = m.handleKey(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	m = tm.(model)
+	if m.quitArmed {
+		t.Fatal("typing did not disarm the quit guard")
+	}
+
+	// Re-arm, then the expiry tick (matching id) disarms; a stale tick
+	// must not.
+	tm, _ = m.handleKey(ctrlC)
+	m = tm.(model)
+	tm, _ = m.Update(quitDisarmMsg{id: m.quitSeq + 100})
+	m = tm.(model)
+	if !m.quitArmed {
+		t.Fatal("stale disarm tick cleared the guard")
+	}
+	tm, _ = m.Update(quitDisarmMsg{id: m.quitSeq})
+	m = tm.(model)
+	if m.quitArmed {
+		t.Fatal("expiry tick did not disarm the guard")
+	}
+
+	// Two presses in a row quit (bubbletea signals via the Quit cmd;
+	// tea.Quit is a nil-receiver func value, so compare against a
+	// quitter sentinel through the message it produces).
+	tm, _ = m.handleKey(ctrlC)
+	m = tm.(model)
+	tm, quitCmd := m.handleKey(ctrlC)
+	if quitCmd == nil {
+		t.Fatal("second ctrl+c produced no command")
+	}
+	if _, ok := quitCmd().(tea.QuitMsg); !ok {
+		t.Fatal("second ctrl+c did not quit")
+	}
+}
+
 // Regression: tool rows are separated by blank lines — including
 // PARALLEL batches, whose rows land consecutively at start time (the
 // old model's trailing spacer piled up at the batch's end instead of

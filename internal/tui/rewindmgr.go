@@ -41,7 +41,7 @@ func (m model) handleRewindKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
 	switch k {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m.ctrlCQuit()
 	case "esc":
 		if m.rewindConfirm {
 			m.rewindConfirm = false

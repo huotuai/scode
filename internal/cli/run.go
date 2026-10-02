@@ -67,7 +67,7 @@ type App struct {
 	pricing llm.Pricing
 	spent   llm.Usage // session-wide accumulated usage
 
-	skills []skills.Skill // loaded at setup; /skill:name expands against these (pi)
+	skills []skills.Skill // loaded at setup; $name expands against these (pi)
 	// skillOpts/skillFp enable hot reload: the discovery config is kept
 	// so /reload (or the prompt-boundary fingerprint check) can re-run
 	// skills.Load mid-session without a restart.
@@ -80,6 +80,11 @@ type App struct {
 	mcpInstructs map[string]string // server name → current instructions text
 	mcpMu        sync.Mutex        // serializes MCP hook mutations of registry + transcript
 	mcpHooks     mcp.Hooks         // kept for the lazy manager creation (runtime /mcp adds)
+	// Startup is non-blocking (pi: the first prompt does not wait for
+	// MCP servers): awaitMCPStartup runs once, at the session's first
+	// prompt, and gives still-connecting servers this bounded budget.
+	mcpStartupWait time.Duration
+	mcpFirstWait   sync.Once
 
 	agentsPath string     // agents.json (sub-agent definitions, RMW)
 	spendMu    sync.Mutex // guards spent: parallel sub-agents fold usage concurrently
@@ -166,6 +171,14 @@ func Setup(opts Options) (*App, error) {
 	if p := settings.Providers[providerName].Pricing; p != nil {
 		a.pricing = *p
 	}
+	// Project settings load ONCE here: the sandbox default below and
+	// the permission engine both read them (project rules sit between
+	// the user-level settings and the session replay entries in
+	// precedence).
+	proj, err := config.LoadProjectSettings(cwd)
+	if err != nil {
+		return nil, err
+	}
 	// Sandbox default: absent/empty means workspace-write (the shipped
 	// posture, dsh's default preset: write inside the workspace and
 	// permitted temp areas, wider retries need approval); an invalid mode
@@ -176,6 +189,17 @@ func Setup(opts Options) (*App, error) {
 		m, err := sandbox.ParseMode(settings.Sandbox.Mode)
 		if err != nil {
 			return nil, fmt.Errorf("sandbox: %w", err)
+		}
+		a.sandboxDefault = m
+	}
+	// The project-level sandbox.mode (written by runtime switches,
+	// see SetSandboxMode) overrides the user-level default for every
+	// NEW session in this workspace; a resumed session's replayed
+	// sandbox entries still win (they fold into sandboxOverride).
+	if proj.Sandbox != nil && proj.Sandbox.Mode != "" {
+		m, err := sandbox.ParseMode(proj.Sandbox.Mode)
+		if err != nil {
+			return nil, fmt.Errorf("sandbox: .scode/settings.json: %w", err)
 		}
 		a.sandboxDefault = m
 	}
@@ -192,10 +216,6 @@ func Setup(opts Options) (*App, error) {
 	// settings.json lists append) + MCP server defaultPolicy as the
 	// fallback tier. The approver starts non-interactive (print mode);
 	// the REPL flips it interactive after Setup.
-	proj, err := config.LoadProjectSettings(cwd)
-	if err != nil {
-		return nil, err
-	}
 	engine, err := buildPermissionEngine(cwd, settings, proj)
 	if err != nil {
 		return nil, fmt.Errorf("permissions: %w", err)
@@ -262,11 +282,15 @@ func Setup(opts Options) (*App, error) {
 	if settings.RewindCheckpointsOn() {
 		a.wrapCheckpoints(registry)
 	}
-	// MCP servers connect at setup like dsh's plugin activation: initial
-	// attempts settle in parallel, discovered tools join the initial
-	// declaration, instructions join the prompt. Startup failures are
-	// tolerated per-server (failOnStartupError flips one to fatal);
-	// the reconnect supervisor keeps trying in the background.
+	// MCP servers start connecting at setup but the first prompt does
+	// not wait for them (pi's non-blocking MCP startup): only
+	// failOnStartupError servers keep dsh's activation semantics
+	// (awaited here, fatal on failure). Every other server connects in
+	// the background — tools and instructions of servers already
+	// connected join the initial declaration below; the rest arrive
+	// through the generation hooks as transcript deltas, and the
+	// session's first prompt gives stragglers a bounded wait
+	// (awaitMCPStartup, pi's startupWaitMs).
 	mcpFile, err := mcp.LoadFile(filepath.Join(cfgDir, "mcp.json"))
 	if err != nil {
 		return nil, err
@@ -298,16 +322,14 @@ func Setup(opts Options) (*App, error) {
 			return nil, err
 		}
 		a.mcpManager = mgr
+		a.mcpStartupWait = mcpFile.StartupWait()
 		mgr.Start()
-		ready := mgr.WaitReady()
-		if err := mgr.FatalStartupError(ready); err != nil {
+		// Only failOnStartupError servers block setup (their configured
+		// semantics are fatal-on-failure); everything else connects in
+		// the background and reports through the hooks.
+		if err := mgr.WaitReadyFatal(); err != nil {
 			mgr.Shutdown()
 			return nil, err
-		}
-		for server, err := range ready {
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "mcp(%s): startup failed, reconnect loop active: %v\n", server, err)
-			}
 		}
 		for _, t := range mgr.Tools() {
 			registry.Add(t)
@@ -315,7 +337,7 @@ func Setup(opts Options) (*App, error) {
 		a.mcpInstructs = mgr.Instructions()
 	}
 	// Skill discovery runs at setup like pi's resource loader: the
-	// listing joins the system prompt, and /skill:name expansion reads
+	// listing joins the system prompt, and $name expansion reads
 	// the same set. Diagnostics surface on stderr (pi's loaded-resources
 	// warnings). The options are kept for hot reload (/reload).
 	a.skillOpts = skills.Options{
@@ -503,6 +525,10 @@ func Setup(opts Options) (*App, error) {
 		Env:    config.ShellEnv(a.Sess.Header().ID, providerName, modelID),
 		CWD:    cwd,
 		Before: beforeHook(engine, reviewer, cwd, a.planCtl),
+		// After: middle-elide oversized tool results BEFORE they enter
+		// the transcript (tools.ShrinkOversizedResult docs) — keeps broad
+		// searches from eating the compaction budget.
+		After: tools.ShrinkOversizedResult,
 		Sandbox: func() *agent.SandboxPolicy {
 			pol := a.SandboxPolicy()
 			return &agent.SandboxPolicy{Mode: string(pol.Mode), WorkspaceRoot: pol.WorkspaceRoot}
@@ -868,6 +894,12 @@ func (a *App) SetSandboxMode(mode string) error {
 	if err := a.persist(session.Entry{Sandbox: &session.SandboxEntry{Mode: string(m)}}); err != nil {
 		fmt.Fprintf(os.Stderr, "sandbox mode persist: %v\n", err)
 	}
+	// Project-level persistence: the switch becomes this workspace's
+	// default for NEW sessions (session replay entries still win on
+	// resume). Best-effort like the session persist above.
+	if err := config.SetProjectSandboxMode(a.CWD, string(m)); err != nil {
+		fmt.Fprintf(os.Stderr, "sandbox mode project persist: %v\n", err)
+	}
 	if a.Tr != nil {
 		if err := a.Tr.Append(sandboxDelta(a.SandboxPolicy())); err != nil {
 			fmt.Fprintf(os.Stderr, "sandbox mode delta: %v\n", err)
@@ -1112,6 +1144,35 @@ func (a *App) onMCPToolsChanged(server string, added []agent.Tool, removed []str
 	if err := a.Tr.Append(msg); err != nil {
 		fmt.Fprintf(os.Stderr, "mcp(%s): tool delta rejected: %v\n", server, err)
 	}
+}
+
+// awaitMCPStartup runs once, at the session's first prompt (pi's
+// startupWaitMs wait at before_agent_start): still-connecting servers
+// get a bounded chance to make their tools available before the first
+// request; stragglers keep connecting in the background and their
+// tools arrive as transcript deltas when they connect. Settled
+// startup failures surface here (they were tolerated at setup).
+func (a *App) awaitMCPStartup() {
+	a.mcpFirstWait.Do(func() {
+		mgr := a.mcpManager
+		if mgr == nil {
+			return
+		}
+		ready, pending := mgr.WaitReadyTimeout(a.mcpStartupWait)
+		names := make([]string, 0, len(ready))
+		for name := range ready {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, server := range names {
+			if err := ready[server]; err != nil {
+				fmt.Fprintf(os.Stderr, "mcp(%s): startup failed, reconnect loop active: %v\n", server, err)
+			}
+		}
+		if len(pending) > 0 {
+			fmt.Fprintln(os.Stderr, "MCP servers are still connecting; their tools become available once connected.")
+		}
+	})
 }
 
 // onMCPInstructionsChanged patches the prompt's mcp section via a
@@ -1393,7 +1454,7 @@ func mcpInstructionsText(blocks map[string]string) string {
 // ---------------------------------------------------------------------------
 // Skill hot reload (/reload re-runs discovery and patches the prompt's
 // skills section via a transcript delta — same discipline as MCP
-// instructions; a failed /skill:name lookup reloads lazily, so normal
+// instructions; a failed $name lookup reloads lazily, so normal
 // prompts never scan the skill tree)
 // ---------------------------------------------------------------------------
 
@@ -1407,7 +1468,7 @@ func (a *App) skillList() []skills.Skill {
 
 // maybeReloadSkills was the eager half of hot reload (a fingerprint
 // check at every prompt boundary); the lazy design below replaced it:
-// normal prompts pay nothing, and only a FAILED /skill:name lookup
+// normal prompts pay nothing, and only a FAILED $name lookup
 // triggers one fingerprint check + reload + retry.
 
 func (a *App) skillFingerprint() uint64 {
@@ -1416,7 +1477,14 @@ func (a *App) skillFingerprint() uint64 {
 	return a.skillFp
 }
 
-// expandSkill expands /skill:name against the live set (pi's
+// isSkillCommandForm reports whether text is a skill invocation
+// ($name canonically, /skill:name as the legacy alias) — the input
+// shapes expandSkill should retry after a lazy reload.
+func isSkillCommandForm(text string) bool {
+	return strings.HasPrefix(text, "$") || strings.HasPrefix(text, "/skill:")
+}
+
+// expandSkill expands $name against the live set (pi's
 // _expandSkillCommand). An unknown name triggers one LAZY reload: the
 // tree is fingerprinted (cheap walk, no file reads), and only a
 // mismatch re-runs discovery and retries the expansion once — a skill
@@ -1424,7 +1492,7 @@ func (a *App) skillFingerprint() uint64 {
 // Still-unknown commands pass through unchanged, like pi.
 func (a *App) expandSkill(text string) string {
 	out := skills.ExpandCommand(text, a.skillList())
-	if out != text || !strings.HasPrefix(text, "/skill:") {
+	if out != text || !isSkillCommandForm(text) {
 		return out // expanded, or not a skill command at all
 	}
 	if skills.Fingerprint(a.skillOpts) == a.skillFingerprint() {
@@ -1438,7 +1506,7 @@ func (a *App) expandSkill(text string) string {
 // swaps the live set: the system prompt's skills section is patched via
 // a transcript section delta (CurrentSystemMessage replays by name;
 // empty deletes), so the next request sees the new listing and
-// /skill:name expands against it. Returns a human summary.
+// $name expands against it. Returns a human summary.
 func (a *App) ReloadSkills() string {
 	res := skills.Load(a.skillOpts)
 	for _, d := range res.Diagnostics {
@@ -1503,12 +1571,16 @@ func (a *App) ReloadSkills() string {
 // then retry the failed turn from the rebuilt projection.
 func (a *App) Run(ctx context.Context, out chan<- agent.Event, promptText string, images ...llm.Block) error {
 	defer close(out)
+	// First prompt of the session: give still-connecting MCP servers a
+	// bounded chance to land their tools before the first request (pi's
+	// startupWaitMs); a no-op afterwards and when no servers exist.
+	a.awaitMCPStartup()
 	// The raw prompt names the session before command expansion bloats it.
 	rawPrompt := promptText
 	// Command expansion happens at the prompt boundary (pi's
 	// _expandSkillCommand in agent-session.prompt): built-in prompt
 	// commands (/commit, /commit-push-pr) become canned workflows, then
-	// /skill:name expands; unknown commands pass through unchanged.
+	// $name expands; unknown commands pass through unchanged.
 	if expanded, ok := expandPromptCommand(promptText); ok {
 		promptText = expanded
 	} else {

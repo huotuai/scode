@@ -32,6 +32,7 @@ var readOnlyTools = []agent.Tool{
 	tools.GrepTool{},
 	tools.FindTool{},
 	tools.LsTool{},
+	tools.CodeMapTool{},
 }
 
 // ToolCount is the delegate toolset size (the /agents list badge).
@@ -68,7 +69,7 @@ func NewTaskTool(h Host) *TaskTool {
 	return &TaskTool{host: h}
 }
 
-const taskDescription = `Delegate a self-contained task to an isolated sub-agent with its own context window, model, and reasoning effort. The sub-agent NEVER sees this conversation — the prompt must carry everything it needs (goal, constraints, where to look). It runs with read-only tools (read, grep, find, ls) and returns a report as this tool's result. Use it for bounded research: locating code, gathering evidence across many files, summarizing a subsystem. Prefer one delegate over reading dozens of files yourself. The agent name must be one of the configured sub-agents (see the /agents manager).`
+const taskDescription = `Delegate a self-contained task to an isolated sub-agent with its own context window, model, and reasoning effort. The sub-agent NEVER sees this conversation — the prompt must carry everything it needs (goal, constraints, where to look). It runs with read-only tools (read, grep, find, ls, codemap) and returns a report as this tool's result. Use it for bounded research: locating code, gathering evidence across many files, summarizing a subsystem. Prefer one delegate over reading dozens of files yourself. The agent name must be one of the configured sub-agents (see the /agents manager).`
 
 func (t *TaskTool) Decl() llm.Tool {
 	return llm.Tool{
@@ -81,12 +82,23 @@ func (t *TaskTool) Decl() llm.Tool {
 	}
 }
 
+// PromptContribution surfaces the delegation tool in the system
+// prompt's tools/rules sections — previously the "prefer a delegate"
+// advice lived only inside the tool's JSON description, so models
+// rarely discovered it. Exploration through a sub-agent keeps the
+// main transcript (and its token bill) free of search fan-out.
+func (t *TaskTool) PromptContribution() (string, []string) {
+	return "Delegate read-only research to an isolated sub-agent", []string{
+		"For broad exploration — locating code, mapping a subsystem, gathering evidence across many files — delegate to the task tool instead of running many searches in this conversation; the sub-agent's steps do not consume this session's context.",
+	}
+}
+
 // subSystemPrompt is the delegate's system prompt: its own charter,
 // never the parent session's.
 func subSystemPrompt(s Spec) string {
 	var b strings.Builder
 	b.WriteString("You are a focused research sub-agent inside scode, a coding agent harness. " +
-		"You have READ-ONLY tools: read, grep, find, ls. Investigate exactly the task you were given — " +
+		"You have READ-ONLY tools: read, grep, find, ls, codemap. Investigate exactly the task you were given — " +
 		"do not ask questions, do not attempt edits. Work efficiently: narrow searches before wide ones. " +
 		"Finish with a concise factual report: findings first, with file paths and line references, then any caveats.")
 	if s.Description != "" {
@@ -124,8 +136,20 @@ func (t *TaskTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.Too
 	var known []string
 	for i := range specs {
 		known = append(known, specs[i].Name)
+		// Exact match wins; EqualFold tolerates the training-prior
+		// casing ("Explore" for "explore" — Claude Code capitalizes
+		// its built-in agent names) that first-time delegations guess.
 		if specs[i].Name == a.Agent {
 			spec = &specs[i]
+			break
+		}
+	}
+	if spec == nil {
+		for i := range specs {
+			if strings.EqualFold(specs[i].Name, a.Agent) {
+				spec = &specs[i]
+				break
+			}
 		}
 	}
 	if spec == nil {
@@ -146,10 +170,13 @@ func (t *TaskTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.Too
 		Provider: provider,
 		Model:    model,
 		Stream:   llm.StreamOptions{ThinkingLevel: spec.Effort},
-		Tools:   agent.NewRegistry(readOnlyTools...),
-		Env:     t.host.Env(),
-		CWD:     t.host.CWD(),
-		Sandbox: t.host.Sandbox,
+		Tools:    agent.NewRegistry(readOnlyTools...),
+		Env:      t.host.Env(),
+		CWD:      t.host.CWD(),
+		Sandbox:  t.host.Sandbox,
+		// The delegate explores freely; shrink its oversized results
+		// the same way the parent session does.
+		After: tools.ShrinkOversizedResult,
 	})
 	tr, err := sub.NewSession(subSystemPrompt(*spec))
 	if err != nil {

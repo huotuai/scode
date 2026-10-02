@@ -510,6 +510,24 @@ func TestLoopUnknownToolSelfHeals(t *testing.T) {
 	}
 }
 
+// The registry tolerates a training-prior casing on a MISS ("Echo" for
+// "echo" — models carry Claude Code's capitalized tool names); exact
+// names always win, unknown names still fail.
+func TestRegistryGetCaseInsensitive(t *testing.T) {
+	r := NewRegistry(&echoTool{})
+	if _, ok := r.Get("echo"); !ok {
+		t.Fatal("exact lookup failed")
+	}
+	for _, name := range []string{"Echo", "ECHO"} {
+		if _, ok := r.Get(name); !ok {
+			t.Fatalf("case-insensitive lookup %q failed", name)
+		}
+	}
+	if _, ok := r.Get("nope"); ok {
+		t.Fatal("unknown name resolved")
+	}
+}
+
 func TestLoopCancel(t *testing.T) {
 	block := make(chan struct{})
 	p := &blockingProvider{release: block}

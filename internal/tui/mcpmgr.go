@@ -126,7 +126,7 @@ func (m *model) mcpNew() {
 func (m model) handleMcpKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
 	if k == "ctrl+c" {
-		return m, tea.Quit
+		return m.ctrlCQuit()
 	}
 	if m.mcpStage == mcpStageEdit {
 		return m.handleMcpEditKey(msg, k)

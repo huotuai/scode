@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"scode/internal/agent"
@@ -19,7 +20,7 @@ type ReadTool struct{}
 func (ReadTool) Decl() llm.Tool {
 	return llm.Tool{
 		Name:        "read",
-		Description: "Read a file's contents. Text files return a line window with continuation pointers ([Showing lines X-Y of N]); use offset/limit to page. Image files are returned as attachments.",
+		Description: "Read a file's contents. Text files return a line window with line-number prefixes (N | text) and continuation pointers ([Showing lines X-Y of N]); use offset/limit to page. Image files are returned as attachments.",
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"File path, absolute or relative to the working directory"},"offset":{"type":"integer","description":"1-based line number to start from"},"limit":{"type":"integer","description":"Maximum number of lines to return"}},"required":["path"]}`),
 	}
 }
@@ -77,9 +78,21 @@ func (ReadTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.ToolRe
 	if a.Limit > 0 && start-1+a.Limit < end {
 		end = start - 1 + a.Limit
 	}
-	window := strings.Join(lines[start-1:end], "\n")
+	window := lines[start-1 : end]
 
-	tr := TruncateHead(window)
+	// Line-number prefixes let grep results and edit anchors align with
+	// read windows without a second call. Right-align to the width of
+	// the window's last line number so columns stay stable.
+	var sb strings.Builder
+	width := len(strconv.Itoa(end))
+	for i, l := range window {
+		if i > 0 {
+			sb.WriteByte('\n')
+		}
+		fmt.Fprintf(&sb, "%*d | %s", width, start+i, l)
+	}
+
+	tr := TruncateHead(sb.String())
 	out := tr.Text
 	if tr.Truncated {
 		out += "\n" + tr.Notice
@@ -90,7 +103,11 @@ func (ReadTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.ToolRe
 	return agent.TextResult(out)
 }
 
-// PromptContribution is pi's readToolSystemPromptContribution.
+// PromptContribution is pi's readToolSystemPromptContribution, plus a
+// windowed-read guideline: grep first, then read the matching window.
 func (ReadTool) PromptContribution() (string, []string) {
-	return "Read file contents", []string{"Use read to examine files instead of cat or sed."}
+	return "Read file contents", []string{
+		"Use read to examine files instead of cat or sed.",
+		"For large files, grep for the relevant symbol first, then read a window around the match with offset/limit instead of reading the whole file.",
+	}
 }

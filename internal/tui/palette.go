@@ -8,29 +8,29 @@ import (
 	"scode/internal/i18n"
 )
 
-// Command completion palette: typing "/" opens the full command list
-// (project /skill:name entries first, then builtins), and each further
-// keystroke narrows it — prefix matches rank above subsequence ("greedy")
-// matches. ↑/↓ navigate (the window scrolls to follow the highlight),
-// Tab accepts into the input, Enter accepts unless the typed text
-// already IS a full command (then it submits), Esc dismisses until
-// the text changes.
+// Command completion palette: typing "/" opens the slash-command list
+// (builtins + prompt commands), typing "$" opens the skill list, and
+// each further keystroke narrows it — prefix matches rank above
+// subsequence ("greedy") matches. ↑/↓ navigate (the window scrolls to
+// follow the highlight), Tab accepts into the input, Enter accepts
+// unless the typed text already IS a full command (then it submits),
+// Esc dismisses until the text changes.
 
 // paletteMaxRows caps the visible candidates; an overflow line counts
 // the rest.
 const paletteMaxRows = 8
 
 // matchCommands ranks cmds against the typed query (with or without the
-// leading "/"): prefix matches first (canonical order), then
-// subsequence matches. An empty query returns everything.
+// leading "/" or "$" marker): prefix matches first (canonical order),
+// then subsequence matches. An empty query returns everything.
 func matchCommands(query string, cmds []cli.CommandInfo) []cli.CommandInfo {
-	q := strings.ToLower(strings.TrimPrefix(query, "/"))
+	q := strings.ToLower(strings.TrimLeft(query, "/$"))
 	if q == "" {
 		return cmds
 	}
 	var prefix, fuzzy []cli.CommandInfo
 	for _, c := range cmds {
-		name := strings.ToLower(strings.TrimPrefix(c.Name, "/"))
+		name := strings.ToLower(strings.TrimLeft(c.Name, "/$"))
 		if strings.HasPrefix(name, q) {
 			prefix = append(prefix, c)
 		} else if subsequence(name, q) {
@@ -52,15 +52,20 @@ func subsequence(s, q string) bool {
 }
 
 // updatePalette recomputes the palette state from the current input:
-// open only while the FIRST token is a "/..." fragment (a space or
-// newline means the command part is done) and the fragment is not the
-// one Esc just dismissed (paletteEsc — update() re-runs this on every
-// blink/focus message, so a bare text check would resurrect the list
-// half a second after Esc; editing the text re-arms it). Candidates
-// refresh every keystroke, so a skill hot reload shows up immediately.
+// open only while the FIRST token is a "/..." or "$..." fragment (a
+// space or newline means the command part is done) and the fragment is
+// not the one Esc just dismissed (paletteEsc — update() re-runs this on
+// every blink/focus message, so a bare text check would resurrect the
+// list half a second after Esc; editing the text re-arms it).
+// Candidates refresh every keystroke, so a skill hot reload shows up
+// immediately.
 func (m *model) updatePalette() {
 	text := m.input.Value()
-	if m.pending != nil || !strings.HasPrefix(text, "/") || strings.ContainsAny(text, " \n") {
+	lead := byte(0)
+	if text != "" {
+		lead = text[0]
+	}
+	if m.pending != nil || (lead != '/' && lead != '$') || strings.ContainsAny(text, " \n") {
 		m.paletteEsc = "" // left the command form: re-arm
 		m.paletteOpen = false
 		m.paletteHits = nil
@@ -74,21 +79,24 @@ func (m *model) updatePalette() {
 		m.paletteIdx = 0
 		return
 	}
-	// Skills first: the project's own /skill:name commands are the most
-	// specific entries and would otherwise fall under the builtins into
-	// the row-cap overflow, invisible on a bare "/".
 	var cmds []cli.CommandInfo
-	if m.app != nil {
-		cmds = append(cmds, m.app.SkillCommands()...)
+	if lead == '$' {
+		// "$..." is the skill namespace: only $name entries apply.
+		if m.app != nil {
+			cmds = append(cmds, m.app.SkillCommands()...)
+		}
+	} else {
+		// "/..." lists the slash commands; skills live under "$" now.
+		cmds = append(cmds, cli.BuiltinCommands()...)
+		// Prompt commands (/commit, ...) execute through the prompt
+		// path, not App.Command — but they are first-class palette
+		// entries.
+		cmds = append(cmds, cli.PromptCommandInfos()...)
+		// TUI-local commands (the overlay lives here, not in cli).
+		cmds = append(cmds,
+			cli.CommandInfo{Name: "/sandbox", Hint: "", Desc: i18n.T("tui.palette.sandboxDesc")},
+		)
 	}
-	cmds = append(cmds, cli.BuiltinCommands()...)
-	// Prompt commands (/commit, ...) execute through the prompt path,
-	// not App.Command — but they are first-class palette entries.
-	cmds = append(cmds, cli.PromptCommandInfos()...)
-	// TUI-local commands (the overlay lives here, not in cli).
-	cmds = append(cmds,
-		cli.CommandInfo{Name: "/sandbox", Hint: "", Desc: i18n.T("tui.palette.sandboxDesc")},
-	)
 	m.paletteHits = matchCommands(text, cmds)
 	m.paletteOpen = len(m.paletteHits) > 0
 	if m.paletteIdx >= len(m.paletteHits) {

@@ -105,7 +105,7 @@ TUI 键位：`Enter` 发送，`ctrl+j` 换行；运行中输入自动转为插�
 | `/fork [N]` | 克隆会话（可只保留前 N 条），实验不污染原会话 |
 | `/model` | 显示/切换当前模型 |
 | `/sessions` | 列出本目录会话 |
-| `/skill:名字 [参数]` | 显式调用 skill |
+| `$名字 [参数]` | 显式调用 skill（兼容旧写法 `/skill:名字`） |
 | `/exit` | 退出 |
 
 ## 配置（~/.scode/settings.json）

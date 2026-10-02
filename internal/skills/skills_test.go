@@ -216,11 +216,14 @@ func TestExpandCommand(t *testing.T) {
 		t.Fatalf("got = %q", got)
 	}
 	// Unknown skill passes through (pi sends it as a normal prompt).
+	if got := ExpandCommand("$nope do it", skills); got != "$nope do it" {
+		t.Fatalf("got = %q", got)
+	}
 	if got := ExpandCommand("/skill:nope do it", skills); got != "/skill:nope do it" {
 		t.Fatalf("got = %q", got)
 	}
 	// Full expansion: block + relative note + frontmatter-stripped body.
-	got := ExpandCommand("/skill:pdf-tools", skills)
+	got := ExpandCommand("$pdf-tools", skills)
 	want := `<skill name="pdf-tools" location="` + filepath.Join(root, "pdf", "SKILL.md") + `">` + "\n" +
 		"References are relative to " + filepath.Join(root, "pdf") + ".\n\n" +
 		"Use pdftk for everything.\n</skill>"
@@ -228,9 +231,13 @@ func TestExpandCommand(t *testing.T) {
 		t.Fatalf("got = %q\nwant = %q", got, want)
 	}
 	// Args append after the block.
-	got = ExpandCommand("/skill:pdf-tools merge a.pdf b.pdf", skills)
+	got = ExpandCommand("$pdf-tools merge a.pdf b.pdf", skills)
 	if !strings.HasSuffix(got, "</skill>\n\nmerge a.pdf b.pdf") {
 		t.Fatalf("got = %q", got)
+	}
+	// The legacy /skill:name spelling still expands (alias).
+	if got := ExpandCommand("/skill:pdf-tools", skills); got != want {
+		t.Fatalf("legacy form = %q\nwant = %q", got, want)
 	}
 }
 

@@ -179,6 +179,40 @@ func AddProjectAllowRule(cwd, rule string) error {
 	return os.WriteFile(path, append(b, '\n'), 0o644)
 }
 
+// SetProjectSandboxMode persists a sandbox mode switch to the project
+// settings (sandbox.mode), preserving unknown keys (map-level
+// read-modify-write, same discipline as AddProjectAllowRule). The mode
+// string is NOT validated here — callers validate with
+// sandbox.ParseMode before persisting.
+func SetProjectSandboxMode(cwd, mode string) error {
+	path := ProjectSettingsPath(cwd)
+	doc := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return fmt.Errorf(".scode/settings.json: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	sb, _ := doc["sandbox"].(map[string]any)
+	if sb == nil {
+		sb = map[string]any{}
+		doc["sandbox"] = sb
+	}
+	if existing, _ := sb["mode"].(string); existing == mode {
+		return nil // already persisted
+	}
+	sb["mode"] = mode
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(b, '\n'), 0o644)
+}
+
 // WebSettings mirrors the web section: the web_search backend and the
 // web_fetch private-network gate. API keys for the key-backed search
 // providers come from the environment (BRAVE_API_KEY / TAVILY_API_KEY),

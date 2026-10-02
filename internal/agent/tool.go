@@ -8,6 +8,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 
 	"scode/internal/llm"
@@ -138,8 +139,20 @@ func (r *Registry) Add(t Tool) {
 func (r *Registry) Get(name string) (Tool, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	t, ok := r.tools[name]
-	return t, ok
+	if t, ok := r.tools[name]; ok {
+		return t, true
+	}
+	// Case-insensitive fallback on a MISS only: models sometimes emit a
+	// tool name with a training-prior casing ("Task" for "task",
+	// carried over from Claude Code transcripts) on their first call.
+	// Exact names always win; the scan only runs when the exact lookup
+	// already failed.
+	for n, t := range r.tools {
+		if strings.EqualFold(n, name) {
+			return t, true
+		}
+	}
+	return nil, false
 }
 
 // Remove unregisters a tool by name (MCP servers drop tools when their

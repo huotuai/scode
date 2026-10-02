@@ -79,7 +79,7 @@ func TestExpandPromptCommand(t *testing.T) {
 }
 
 // The prompt commands must expand at the App.Run boundary (the same
-// place /skill:name expands), so every entry surface — REPL, TUI,
+// place $name skills expand), so every entry surface — REPL, TUI,
 // print mode — gets the workflow for free.
 func TestPromptCommandExpandsAtRunBoundary(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

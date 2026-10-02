@@ -110,7 +110,10 @@ func matchIgnorePattern(pattern, relSlash string) bool {
 	return false
 }
 
-// PromptContribution is pi's findToolSystemPromptContribution.
+// PromptContribution is pi's findToolSystemPromptContribution, plus a
+// nudge toward content search when the file name is unknown.
 func (FindTool) PromptContribution() (string, []string) {
-	return "Find files by glob pattern (respects .gitignore)", nil
+	return "Find files by glob pattern (respects .gitignore)", []string{
+		"When you know a symbol or string but not the file, grep for the content instead of guessing file names with find.",
+	}
 }

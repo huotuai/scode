@@ -23,8 +23,8 @@ type GrepTool struct{}
 func (GrepTool) Decl() llm.Tool {
 	return llm.Tool{
 		Name:        "grep",
-		Description: "Search file contents with a regular expression (or literal text). Returns file:line: text matches, respecting .gitignore.",
-		Parameters:  json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string","description":"Regex pattern (or literal text with literal=true)"},"path":{"type":"string","description":"File or directory to search (default: working directory)"},"glob":{"type":"string","description":"Restrict to files matching this glob, e.g. *.go"},"ignoreCase":{"type":"boolean","description":"Case-insensitive matching"},"literal":{"type":"boolean","description":"Treat pattern as literal text"},"context":{"type":"integer","description":"Lines of context around each match"},"limit":{"type":"integer","description":"Maximum matches (default 100)"}},"required":["pattern"]}`),
+		Description: "Search file contents with a regular expression (or literal text). Returns file:line: text matches, respecting .gitignore. With filesOnly=true, returns only the paths of matching files, one per line — a cheap way to shortlist candidates before reading.",
+		Parameters:  json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string","description":"Regex pattern (or literal text with literal=true)"},"path":{"type":"string","description":"File or directory to search (default: working directory)"},"glob":{"type":"string","description":"Restrict to files matching this glob, e.g. *.go"},"ignoreCase":{"type":"boolean","description":"Case-insensitive matching"},"literal":{"type":"boolean","description":"Treat pattern as literal text"},"context":{"type":"integer","description":"Lines of context around each match"},"filesOnly":{"type":"boolean","description":"Return only matching file paths, one per line"},"limit":{"type":"integer","description":"Maximum matches (default 100)"}},"required":["pattern"]}`),
 	}
 }
 
@@ -39,6 +39,7 @@ func (GrepTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.ToolRe
 		IgnoreCase bool   `json:"ignoreCase"`
 		Literal    bool   `json:"literal"`
 		Context    int    `json:"context"`
+		FilesOnly  bool   `json:"filesOnly"`
 		Limit      int    `json:"limit"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
@@ -68,6 +69,26 @@ func (GrepTool) Execute(tc agent.ToolContext, args json.RawMessage) agent.ToolRe
 	info, err := os.Stat(root)
 	if err != nil {
 		return agent.ErrorResult(fmt.Sprintf("cannot stat %s: %v", a.Path, err))
+	}
+
+	// rg fast path (rg.go): same schema and output shape, native
+	// nested-.gitignore handling. Any rg-side failure falls through to
+	// the pure-Go walker below.
+	if bin := rgBinary(); bin != "" {
+		if res, ok := rgSearch(tc, root, info, rgOptions{
+			pattern:    pattern,
+			ignoreCase: a.IgnoreCase,
+			context:    a.Context,
+			glob:       a.Glob,
+			limit:      limit,
+			filesOnly:  a.FilesOnly,
+		}); ok {
+			return res
+		}
+	}
+
+	if a.FilesOnly {
+		return grepFilesOnly(root, a.Path, info, re, a.Glob, limit)
 	}
 
 	var hits []grepHit
@@ -196,6 +217,96 @@ func scanFile(path, display string, re *regexp.Regexp, context, budget int, add 
 	}
 }
 
+// grepFilesOnly implements the filesOnly mode: same walk rules as the
+// match mode (junk dirs, .gitignore, glob, binary skip), but collects
+// one path per matching file. Output stays small even for broad
+// patterns, so the model can shortlist candidates before reading.
+func grepFilesOnly(root, argPath string, info os.FileInfo, re *regexp.Regexp, glob string, limit int) agent.ToolResult {
+	var files []string
+	if !info.IsDir() {
+		if fileHasMatch(root, re) {
+			files = append(files, argPath)
+		}
+	} else {
+		ign := LoadIgnoreMatcher(root)
+		_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				return nil
+			}
+			relSlash := filepath.ToSlash(rel)
+			if d.IsDir() {
+				if junkDirs[d.Name()] || ign.Match(relSlash) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if ign.Match(relSlash) {
+				return nil
+			}
+			if glob != "" && !MatchGlob(glob, relSlash) {
+				return nil
+			}
+			if fileHasMatch(path, re) {
+				files = append(files, relSlash)
+				if len(files) >= limit {
+					return filepath.SkipAll
+				}
+			}
+			return nil
+		})
+	}
+
+	if len(files) == 0 {
+		return agent.TextResult("No matches found.")
+	}
+	tr := TruncateHead(strings.Join(files, "\n"))
+	out := tr.Text
+	if tr.Truncated {
+		out += "\n" + tr.Notice
+	}
+	if len(files) >= limit {
+		out += fmt.Sprintf("\n[Showing %d files at the limit — narrow the pattern or path]", limit)
+	}
+	return agent.TextResult(out)
+}
+
+// fileHasMatch reports whether the file has at least one matching
+// line, with the same binary-file guard as scanFile. Early-exits on
+// the first match, so shortlisting a large tree stays cheap.
+func fileHasMatch(path string, re *regexp.Regexp) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 4<<20)
+	var head []string
+	n := 0
+	for sc.Scan() {
+		line := sc.Text()
+		n++
+		if len(head) < 64 {
+			head = append(head, line)
+			if looksBinary(head) && len(head) == 64 {
+				return false
+			}
+		}
+		if re.MatchString(line) {
+			return !looksBinary(head)
+		}
+		if n > 400_000 { // pathological file guard
+			break
+		}
+	}
+	return false
+}
+
 // looksBinary heuristics: NUL byte or overwhelming non-text ratio in the
 // first lines.
 func looksBinary(lines []string) bool {
@@ -211,7 +322,14 @@ func looksBinary(lines []string) bool {
 	return false
 }
 
-// PromptContribution is pi's grepToolSystemPromptContribution.
+// PromptContribution is pi's grepToolSystemPromptContribution, plus
+// search-strategy guidelines: grep is the primary locator — narrow
+// before wide, and let match line numbers drive windowed reads.
 func (GrepTool) PromptContribution() (string, []string) {
-	return "Search file contents for patterns (respects .gitignore)", nil
+	return "Search file contents for patterns (respects .gitignore)", []string{
+		"Locate code with grep (content) or find (path) first instead of listing directories and reading files one by one.",
+		"Start narrow: scope grep with path/glob; only widen the search when a narrow one finds nothing.",
+		"If grep returns too many hits, narrow the pattern, path, or glob instead of paging through matches.",
+		"Use grep with filesOnly=true to shortlist candidate files for a broad pattern before drilling into matches or reading.",
+	}
 }

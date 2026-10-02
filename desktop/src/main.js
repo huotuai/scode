@@ -67,7 +67,7 @@ function sessionStoreDir(cwd) {
 }
 
 // cleanTitle turns a stored user message into a sidebar title. Explicit
-// `/skill:name` invocations are persisted as the expanded block
+// `$name` skill invocations are persisted as the expanded block
 // `<skill name="…">…body…</skill>` plus optional args; the body is noise
 // for a title, so prefer the args, else the skill name.
 function cleanTitle(text) {

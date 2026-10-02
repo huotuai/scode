@@ -62,6 +62,60 @@ func TestAddProjectAllowRulePreservesUnknownKeys(t *testing.T) {
 	}
 }
 
+func TestSetProjectSandboxMode(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".scode"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := ProjectSettingsPath(dir)
+	if err := os.WriteFile(path, []byte(`{"note":"keep me","permissions":{"deny":["bash(rm:*)"]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetProjectSandboxMode(dir, "read-only"); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadProjectSettings(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Sandbox == nil || s.Sandbox.Mode != "read-only" {
+		t.Fatalf("sandbox mode not persisted: %+v", s.Sandbox)
+	}
+	// Unknown keys and sibling sections survive the rewrite.
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "keep me") {
+		t.Fatal("unknown key dropped:\n" + string(data))
+	}
+	if len(s.Permissions.Deny) != 1 {
+		t.Fatalf("permissions section lost: %v", s.Permissions)
+	}
+	// A second switch overwrites the mode in place.
+	if err := SetProjectSandboxMode(dir, "danger-full-access"); err != nil {
+		t.Fatal(err)
+	}
+	s, err = LoadProjectSettings(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Sandbox.Mode != "danger-full-access" {
+		t.Fatalf("mode not updated: %q", s.Sandbox.Mode)
+	}
+}
+
+func TestSetProjectSandboxModeCreatesTree(t *testing.T) {
+	dir := t.TempDir() // no .scode yet
+	if err := SetProjectSandboxMode(dir, "workspace-write"); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadProjectSettings(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Sandbox == nil || s.Sandbox.Mode != "workspace-write" {
+		t.Fatalf("sandbox mode not persisted: %+v", s.Sandbox)
+	}
+}
+
 // Model resolution priority: flag > providers.<name>.model > defaultModel
 // > protocol constant.
 func TestResolveProviderModelPriority(t *testing.T) {

@@ -88,6 +88,28 @@ func (m *model) applySandbox(idx int) {
 	m.appendBlock(noteLine(sandboxNote(mode)))
 }
 
+// cycleSandbox is the shift+tab shortcut: step the session's sandbox
+// mode one notch (read-only → workspace-write → danger-full-access →
+// read-only) without opening the picker. The switch applies
+// immediately (the per-call policy is re-resolved for every tool call)
+// and persists to the session log + project settings inside
+// SetSandboxMode.
+func (m *model) cycleSandbox() {
+	modes := sandboxModes()
+	cur := 0
+	for i, md := range modes {
+		if md.value == m.app.SandboxMode() {
+			cur = i
+		}
+	}
+	next := modes[(cur+1)%len(modes)].value
+	if err := m.app.SetSandboxMode(next); err != nil {
+		m.appendBlock(errStyle.Render("error: " + err.Error()))
+		return
+	}
+	m.appendBlock(noteLine(sandboxNote(next)))
+}
+
 // sandboxView renders the picker overlay: one row per mode (badge word
 // colored like the status bar, description dim, the active mode marked),
 // the highlight following sandboxIdx, and a key hint.

@@ -44,14 +44,18 @@ func chatSSEBlob(w http.ResponseWriter, content string) {
 	}
 }
 
-// quitProgram sends ctrl+c until the program exits: if a run is still
-// in flight the first one only aborts the run (REPL semantics), so a
-// second keystroke is needed to quit.
+// quitProgram sends ctrl+c pairs until the program exits: if a run is
+// still in flight the first one only aborts the run (REPL semantics),
+// and quitting needs a second press inside the double-ctrl+c guard
+// window — so each attempt fires a pair back to back.
 func quitProgram(t *testing.T, pw io.Writer, runDone chan error) {
 	t.Helper()
 	for range 3 {
-		if err := (scriptWriter{pw}).write("\x03"); err != nil {
-			t.Fatal(err)
+		for range 2 {
+			if err := (scriptWriter{pw}).write("\x03"); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(200 * time.Millisecond)
 		}
 		select {
 		case err := <-runDone:

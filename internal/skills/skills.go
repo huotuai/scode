@@ -6,7 +6,7 @@
 // optional disable-model-invocation). SKILL.md marks a skill root. Skills
 // are DISCOVERED, never eagerly loaded: the system prompt lists them in
 // <available_skills>, and the model reads the file with the read tool
-// when a task matches. Explicit invocation (/skill:name) inlines the
+// when a task matches. Explicit invocation ($name) inlines the
 // file body into the user message as a <skill> block (pi's
 // _expandSkillCommand).
 package skills
@@ -150,7 +150,7 @@ type LoadResult struct {
 
 // FormatForPrompt renders the <available_skills> block for the system
 // prompt. Skills with DisableModelInvocation are excluded (pi: they can
-// only be invoked explicitly via /skill:name). Returns "" when no skills
+// only be invoked explicitly via $name). Returns "" when no skills
 // are visible. scode always has the read tool, so pi's fileReadTool is
 // fixed to "read".
 func FormatForPrompt(skills []Skill) string {
@@ -195,16 +195,23 @@ func escapeXML(s string) string {
 // Explicit invocation (pi's _expandSkillCommand + parseSkillBlock)
 // ---------------------------------------------------------------------------
 
-// ExpandCommand expands a "/skill:name args" input into the full skill
-// block (pi's _expandSkillCommand): the frontmatter-stripped file body
-// wrapped with name/location and the relative-reference note, followed
-// by any args. Unknown commands and unknown skill names pass through
-// unchanged (pi sends the original text as a normal prompt).
+// ExpandCommand expands a skill invocation into the full skill block
+// (pi's _expandSkillCommand): "$name args" is the canonical form (the
+// legacy "/skill:name args" spelling is still accepted). The
+// frontmatter-stripped file body is wrapped with name/location and the
+// relative-reference note, followed by any args. Unknown commands and
+// unknown skill names pass through unchanged (pi sends the original
+// text as a normal prompt).
 func ExpandCommand(text string, skills []Skill) string {
-	if !strings.HasPrefix(text, "/skill:") {
+	var rest string
+	switch {
+	case strings.HasPrefix(text, "$"):
+		rest = text[1:]
+	case strings.HasPrefix(text, "/skill:"):
+		rest = text[len("/skill:"):]
+	default:
 		return text
 	}
-	rest := text[len("/skill:"):]
 	name, args, _ := strings.Cut(rest, " ")
 	args = strings.TrimSpace(args)
 

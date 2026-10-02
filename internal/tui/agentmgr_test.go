@@ -30,7 +30,7 @@ func TestAgentsOverlayFlow(t *testing.T) {
 	// the read-only toolset badge.
 	if view := plain(m.agentsView()); !strings.Contains(view, "general-purpose") ||
 		!strings.Contains(view, "explore") || !strings.Contains(view, "内置") ||
-		!strings.Contains(view, "4 个工具") {
+		!strings.Contains(view, "5 个工具") {
 		t.Fatalf("built-in agents missing from the empty list:\n%s", view)
 	}
 	// The modal hides the input box.

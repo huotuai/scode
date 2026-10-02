@@ -155,6 +155,27 @@ func TestTaskToolBuiltinAvailable(t *testing.T) {
 	}
 }
 
+// The agent NAME match tolerates the training-prior casing a
+// first-time delegation guesses ("Explore" — Claude Code capitalizes
+// its built-in agent names) and resolves the canonical built-in.
+func TestTaskToolAgentNameCaseInsensitive(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		subSSE(w, "researched", false)
+	}))
+	defer srv.Close()
+
+	host, _, _ := subTestHost(t, srv, nil) // no user specs
+	tool := NewTaskTool(host)
+	res := tool.Execute(agent.ToolContext{Ctx: context.Background(), CWD: t.TempDir()},
+		json.RawMessage(`{"agent":"Explore","prompt":"look around"}`))
+	if res.IsError {
+		t.Fatalf("case-insensitive delegate failed: %+v", res)
+	}
+	if text := resultText(res); !strings.Contains(text, "(sub-agent explore ·") {
+		t.Fatalf("canonical name not used in footer: %q", text)
+	}
+}
+
 // A multi-turn delegate: it runs a real read tool first, then reports
 // — no turn cap exists; the run ends when the delegate finishes (or
 // the parent aborts).

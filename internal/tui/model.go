@@ -42,6 +42,14 @@ type flushTickMsg struct{}
 // older one, but the older timer still fires).
 type toastExpireMsg struct{ id int }
 
+// quitDisarmMsg expires the double-ctrl+c quit guard; the id ensures a
+// stale timer never disarms a freshly armed guard.
+type quitDisarmMsg struct{ id int }
+
+// quitArmTTL is the window in which a second ctrl+c quits after the
+// first one armed the guard.
+const quitArmTTL = 2 * time.Second
+
 // flushInterval caps viewport re-syncs during streaming (~30fps).
 const flushInterval = 33 * time.Millisecond
 
@@ -104,6 +112,13 @@ type model struct {
 	cancel  context.CancelFunc
 	queued  []string // slash commands queued mid-run (REPL parity)
 	quit    bool     // a queued /exit fired
+
+	// Double-ctrl+c quit guard: the first press arms the guard (and
+	// floats a hint toast), only a second press inside quitArmTTL quits,
+	// so a stray ctrl+c cannot kill the session. Any other key disarms.
+	// quitSeq ids each arming so a stale disarm tick clears nothing.
+	quitArmed bool
+	quitSeq   int
 
 	pending *approvalRequest
 
@@ -240,7 +255,13 @@ type model struct {
 
 func newModel(app *cli.App, ui chan any) model {
 	ta := textarea.New()
-	ta.Prompt = "> "
+	ta.Prompt = composerPrompt
+	// The prompt glyph renders as an accent badge (the style is per
+	// focus state; the composer never blurs, but set both).
+	styles := ta.Styles()
+	styles.Focused.Prompt = composerPromptStyle
+	styles.Blurred.Prompt = composerPromptStyle
+	ta.SetStyles(styles)
 	ta.Placeholder = i18n.T("tui.main.placeholder")
 	ta.ShowLineNumbers = false
 	ta.DynamicHeight = true
@@ -480,6 +501,11 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toast = nil
 		}
 		return m, nil
+	case quitDisarmMsg:
+		if m.quitSeq == msg.id {
+			m.quitArmed = false
+		}
+		return m, nil
 	}
 	// Everything else (focus, cursor blink, the picker's async dir reads)
 	// goes to the open picker and the input.
@@ -495,6 +521,10 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
+	// Any key other than ctrl+c disarms the double-ctrl+c quit guard.
+	if k != "ctrl+c" {
+		m.quitArmed = false
+	}
 	// A pending approval owns the keyboard.
 	if m.pending != nil {
 		req := m.pending
@@ -561,7 +591,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					m.resize()
 					return m, nil
 				}
-				return m, tea.Quit
+				return m.ctrlCQuit()
 			}
 			m.answerKey(k) // letter accelerators (ignored when not an option)
 			return m, nil
@@ -580,7 +610,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.attachClipboardImage()
 			return m, nil
 		case "ctrl+c":
-			return m, tea.Quit
+			return m.ctrlCQuit()
 		}
 		var cmd tea.Cmd
 		m.picker, cmd = m.picker.Update(msg)
@@ -599,7 +629,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.sandboxOpen {
 		switch k {
 		case "ctrl+c":
-			return m, tea.Quit
+			return m.ctrlCQuit()
 		case "esc":
 			m.sandboxOpen = false
 			m.resize()
@@ -622,7 +652,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.modelOpen {
 		switch k {
 		case "ctrl+c":
-			return m, tea.Quit
+			return m.ctrlCQuit()
 		case "esc":
 			if m.modelStage == modelStageEffort {
 				m.modelStage = modelStageList // step back to the model list
@@ -661,7 +691,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.modelsOpen {
 		switch k {
 		case "ctrl+c":
-			return m, tea.Quit
+			return m.ctrlCQuit()
 		case "esc":
 			m.modelsBack()
 			return m, nil
@@ -787,12 +817,23 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.cancelRun() // first ctrl+c aborts the run, like the REPL
 			return m, nil
 		}
-		return m, tea.Quit
+		return m.ctrlCQuit()
 	case "ctrl+o":
 		// Expand/collapse all thinking blocks.
 		m.expandThinking = !m.expandThinking
 		m.rebuildRendered()
 		m.syncViewport()
+		return m, nil
+	case "shift+tab":
+		// Cycle the session sandbox mode (read-only → workspace-write →
+		// danger-full-access). Only reached in the normal input state:
+		// overlays and approval/plan reviews claim shift+tab for button
+		// navigation earlier in Update; with the completion palette
+		// open the key stays with the input.
+		if m.paletteOpen {
+			break
+		}
+		m.cycleSandbox()
 		return m, nil
 	case "esc":
 		if m.running {
@@ -917,9 +958,10 @@ func (m model) submit() (tea.Model, tea.Cmd) {
 	m.input.Reset()
 	m.updatePalette()
 	m.resize()
-	// /skill:name and the built-in prompt commands (/commit, ...) are NOT
-	// UI commands — they flow to the prompt path and expand there. Every
-	// other "/" line is a UI command.
+	// $name skill invocations and the built-in prompt commands
+	// (/commit, ...) are NOT UI commands — they flow to the prompt path
+	// and expand there. Every other "/" line is a UI command. (The
+	// legacy /skill:name spelling is excepted the same way.)
 	if strings.HasPrefix(text, "/") && !strings.HasPrefix(text, "/skill:") && !cli.IsPromptCommand(text) {
 		if m.running {
 			m.queued = append(m.queued, text)
@@ -1255,6 +1297,22 @@ func (m *model) copySelection() tea.Cmd {
 type toastInfo struct {
 	text string
 	id   int
+}
+
+// ctrlCQuit gates quitting behind a double press: the first ctrl+c
+// arms the guard and floats a hint toast; a second press inside
+// quitArmTTL quits. Used by every ctrl+c quit site (global handler and
+// all overlays) so a stray keypress never kills the session.
+func (m model) ctrlCQuit() (tea.Model, tea.Cmd) {
+	if m.quitArmed {
+		m.quitArmed = false
+		return m, tea.Quit
+	}
+	m.quitArmed = true
+	m.quitSeq++
+	id := m.quitSeq
+	disarm := tea.Tick(quitArmTTL, func(time.Time) tea.Msg { return quitDisarmMsg{id: id} })
+	return m, tea.Batch(m.showToast(i18n.T("tui.quit.confirmHint")), disarm)
 }
 
 // showToast floats text at the top-right corner for toastTTL. A newer

@@ -13,7 +13,7 @@ import (
 )
 
 // Skill hot reload: a skill added AFTER Setup is invisible to
-// /skill:name expansion until /reload — then it expands and joins the
+// $name expansion until /reload — then it expands and joins the
 // folded system prompt; a later REMOVAL is picked up lazily by the
 // failed-lookup reload (no per-prompt rescan anywhere).
 func TestSkillHotReload(t *testing.T) {
@@ -43,13 +43,13 @@ func TestSkillHotReload(t *testing.T) {
 	}
 
 	// Baseline: the skill does not exist; the command passes through.
-	if got := skills.ExpandCommand("/skill:hot do it", app.skillList()); got != "/skill:hot do it" {
+	if got := skills.ExpandCommand("$hot do it", app.skillList()); got != "$hot do it" {
 		t.Fatalf("baseline expansion = %q", got)
 	}
 
 	// Added mid-session: still unknown until a reload.
 	writeSkill()
-	if got := skills.ExpandCommand("/skill:hot do it", app.skillList()); got != "/skill:hot do it" {
+	if got := skills.ExpandCommand("$hot do it", app.skillList()); got != "$hot do it" {
 		t.Fatalf("pre-reload expansion = %q", got)
 	}
 
@@ -61,8 +61,8 @@ func TestSkillHotReload(t *testing.T) {
 	if !strings.Contains(out, "added: hot") {
 		t.Fatalf("/reload summary = %q", out)
 	}
-	// .../skill:name expands against the new set...
-	if got := skills.ExpandCommand("/skill:hot do it", app.skillList()); !strings.Contains(got, `<skill name="hot"`) || !strings.HasSuffix(got, "do it") {
+	// ...$name expands against the new set...
+	if got := skills.ExpandCommand("$hot do it", app.skillList()); !strings.Contains(got, `<skill name="hot"`) || !strings.HasSuffix(got, "do it") {
 		t.Fatalf("post-reload expansion = %q", got)
 	}
 	// ...and the folded system prompt lists it for the next request.
@@ -86,13 +86,13 @@ func TestSkillHotReload(t *testing.T) {
 		t.Fatalf("second /reload = %q, %v", out, err)
 	}
 
-	// Removal is picked up LAZILY: the next /skill:hot lookup fails, the
+	// Removal is picked up LAZILY: the next $hot lookup fails, the
 	// fingerprint check notices the changed tree, reloads, and retries —
 	// no manual command, no per-prompt rescan.
 	if err := os.RemoveAll(filepath.Join(app.CWD, ".scode", "skills")); err != nil {
 		t.Fatal(err)
 	}
-	if got := app.expandSkill("/skill:hot do it"); got != "/skill:hot do it" {
+	if got := app.expandSkill("$hot do it"); got != "$hot do it" {
 		t.Fatalf("post-removal expansion = %q", got)
 	}
 	folded = llm.CurrentSystemMessage(app.Tr.Messages())
@@ -103,9 +103,9 @@ func TestSkillHotReload(t *testing.T) {
 	}
 
 	// The reverse direction is lazy too: re-add the skill and the next
-	// /skill:hot lookup reloads + expands with NO manual /reload.
+	// $hot lookup reloads + expands with NO manual /reload.
 	writeSkill()
-	if got := app.expandSkill("/skill:hot do it"); !strings.Contains(got, `<skill name="hot"`) {
+	if got := app.expandSkill("$hot do it"); !strings.Contains(got, `<skill name="hot"`) {
 		t.Fatalf("lazy-add expansion = %q", got)
 	}
 }

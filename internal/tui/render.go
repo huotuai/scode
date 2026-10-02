@@ -155,9 +155,18 @@ var (
 				BorderForeground(inputBorderColor)
 )
 
+// Composer prompt glyph: a chevron replaces the plain "> " prompt.
+// It keeps the old 2-cell width (chevron + space), so the transcript
+// gutter's text column (border cell + prompt) stays aligned, and
+// renders in the SAME style as the typed text (an empty style inherits
+// the textarea's Base, exactly like the text does).
+const composerPrompt = "❯ "
+
+var composerPromptStyle = lipgloss.NewStyle()
+
 // The transcript gutter: a dot in column 1 (one cell off the left edge,
 // a single space from its text), text from column 3 — the same column
-// the composer's text starts at (border cell + "> " prompt), so session
+// the composer's text starts at (border cell + prompt badge), so session
 // content and typed input align.
 const gutterPad = "   " // leading space + dot cell + trailing space
 

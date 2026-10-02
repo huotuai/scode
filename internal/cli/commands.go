@@ -13,7 +13,7 @@ type CommandInfo struct {
 }
 
 // BuiltinCommands lists the slash commands App.Command understands,
-// ordered alphabetically for the palette. /skill:name entries come
+// ordered alphabetically for the palette. $name skill entries come
 // from SkillCommands.
 func BuiltinCommands() []CommandInfo {
 	return []CommandInfo{
@@ -36,14 +36,14 @@ func BuiltinCommands() []CommandInfo {
 	}
 }
 
-// SkillCommands maps the live skill set onto /skill:name palette
-// entries (read per render, so a hot reload shows up immediately).
+// SkillCommands maps the live skill set onto $name palette entries
+// (read per render, so a hot reload shows up immediately).
 func (a *App) SkillCommands() []CommandInfo {
 	list := a.skillList()
 	out := make([]CommandInfo, 0, len(list))
 	for _, s := range list {
 		out = append(out, CommandInfo{
-			Name: "/skill:" + s.Name,
+			Name: "$" + s.Name,
 			Hint: "[args]",
 			Desc: s.Description,
 		})

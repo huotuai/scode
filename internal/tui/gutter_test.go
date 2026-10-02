@@ -53,7 +53,7 @@ func TestToolDotLifecycle(t *testing.T) {
 }
 
 // Alignment: the composer's text and the transcript's guttered text
-// start at the same column (border + "> " prompt == dot + two spaces).
+// start at the same column (border + prompt badge == dot + two spaces).
 func TestComposerAlignment(t *testing.T) {
 	app := setupTestApp(t, func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	m := newModel(app, make(chan any, 16))
@@ -73,7 +73,7 @@ func TestComposerAlignment(t *testing.T) {
 		t.Fatalf("body text starts at column %d, want 3: %q", i, string(body))
 	}
 
-	// Composer: border(1) + "> " prompt(2) → text at column 3.
+	// Composer: border(1) + prompt badge(2) → text at column 3.
 	m.input.SetValue("word")
 	box := plainText(m.inputBoxView())
 	lines := strings.Split(box, "\n")

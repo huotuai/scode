@@ -18,10 +18,10 @@ import (
 	"scode/internal/cli"
 )
 
-// End-to-end: typing "/skill:name args" in the TUI expands the skill
+// End-to-end: typing "$name args" in the TUI expands the skill
 // at the prompt boundary (pi's _expandSkillCommand) — the provider
 // request must carry the <skill> block with the file body and trailing
-// args. Args are optional: "/skill:name" alone expands the same way.
+// args. Args are optional: "$name" alone expands the same way.
 func TestProgramSkillCommand(t *testing.T) {
 	reqBodies := make(chan string, 4)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +65,7 @@ func TestProgramSkillCommand(t *testing.T) {
 	runDone := make(chan error, 1)
 	go func() { _, err := p.Run(); runDone <- err }()
 
-	if err := (scriptWriter{pw}).write("/skill:code-review 看一下这个PR\r"); err != nil {
+	if err := (scriptWriter{pw}).write("$code-review 看一下这个PR\r"); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(10 * time.Second)

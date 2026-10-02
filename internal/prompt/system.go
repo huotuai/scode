@@ -156,6 +156,7 @@ func buildRules(contribs []agent.ToolContribution) string {
 	}
 	add("Be concise in your responses")
 	add("Show file paths clearly when working with files")
+	add("Issue independent exploration calls (grep/find/read) in the same turn rather than one at a time.")
 
 	var b strings.Builder
 	for _, r := range rules {

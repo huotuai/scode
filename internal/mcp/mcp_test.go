@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -120,7 +121,7 @@ func TestSupervisorConnectSyncAndCall(t *testing.T) {
 	sup.start()
 	defer sup.Shutdown()
 
-	if err := <-sup.Ready(); err != nil {
+	if err := sup.AwaitReady(); err != nil {
 		t.Fatal(err)
 	}
 	// The generation registered under the public name.
@@ -168,7 +169,7 @@ func TestSupervisorReconnectAndGiveUp(t *testing.T) {
 	}
 	sup.start()
 	defer sup.Shutdown()
-	if err := <-sup.Ready(); err == nil {
+	if err := sup.AwaitReady(); err == nil {
 		t.Fatal("ready must report the first attempt's failure")
 	}
 	// Wait out the reconnect budget (1ms, 2ms, 2ms delays + attempts).
@@ -217,7 +218,7 @@ func TestSupervisorGiveUpUnregisters(t *testing.T) {
 	}
 	sup.start()
 	defer sup.Shutdown()
-	if err := <-sup.Ready(); err != nil {
+	if err := sup.AwaitReady(); err != nil {
 		t.Fatal(err)
 	}
 	if len(sup.Tools()) != 1 {
@@ -298,7 +299,7 @@ func TestSupervisorReconnectIdenticalNoDelta(t *testing.T) {
 	sup.transportFactory = factory
 	sup.start()
 	defer sup.Shutdown()
-	if err := <-sup.Ready(); err != nil {
+	if err := sup.AwaitReady(); err != nil {
 		t.Fatal(err)
 	}
 	if got := log.callCount(); got != 1 {
@@ -326,6 +327,140 @@ func TestSupervisorReconnectIdenticalNoDelta(t *testing.T) {
 	if len(sup.Tools()) != 1 {
 		t.Fatalf("tools after reconnect = %+v", sup.Tools())
 	}
+}
+
+// blockingFactory gates a transport factory on a release channel: the
+// connection attempt parks inside createTransport until the channel
+// closes (a still-connecting server for startup-wait tests).
+func blockingFactory(release <-chan struct{}, next func() (mcpsdk.Transport, error)) func() (mcpsdk.Transport, error) {
+	return func() (mcpsdk.Transport, error) {
+		<-release
+		return next()
+	}
+}
+
+// WaitReadyTimeout collects settled servers within one absolute budget
+// and lists the rest pending (pi's startupWaitMs): the wait never
+// exceeds the budget, and late servers settle afterwards normally.
+func TestWaitReadyTimeout(t *testing.T) {
+	f := &File{MCPServers: map[string]ServerConfig{
+		"fast": {Transport: "stdio", Command: "unused"},
+		"slow": {Transport: "stdio", Command: "unused"},
+	}}
+	hooks, _ := testHooks()
+	mgr, err := NewManager(f, hooks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fastFactory, cleanupFast := startTestServer(t, "")
+	t.Cleanup(cleanupFast)
+	slowFactory, cleanupSlow := startTestServer(t, "")
+	t.Cleanup(cleanupSlow)
+	release := make(chan struct{})
+	for _, s := range mgr.sups {
+		if s.name == "slow" {
+			s.transportFactory = blockingFactory(release, slowFactory)
+		} else {
+			s.transportFactory = fastFactory
+		}
+	}
+
+	// Zero budget on unstarted supervisors: everything pending, no wait.
+	ready, pending := mgr.WaitReadyTimeout(0)
+	if len(ready) != 0 || len(pending) != 2 {
+		t.Fatalf("pre-start: ready = %v, pending = %v", ready, pending)
+	}
+
+	mgr.Start()
+	start := time.Now()
+	ready, pending = mgr.WaitReadyTimeout(300 * time.Millisecond)
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("bounded wait took %v", elapsed)
+	}
+	if err := ready["fast"]; err != nil {
+		t.Fatalf("fast server: ready err = %v", err)
+	}
+	if _, ok := ready["slow"]; ok {
+		t.Fatalf("slow server should still be pending, ready = %v", ready)
+	}
+	if len(pending) != 1 || pending[0] != "slow" {
+		t.Fatalf("pending = %v, want [slow]", pending)
+	}
+
+	// After the gate opens the straggler settles normally.
+	close(release)
+	all := mgr.WaitReady()
+	if err := all["slow"]; err != nil {
+		t.Fatalf("slow server after release: %v", err)
+	}
+	mgr.Shutdown()
+}
+
+// WaitReadyFatal awaits only failOnStartupError servers: a failing
+// critical server is fatal even while a normal server is still
+// connecting; a healthy critical server passes without waiting for the
+// rest.
+func TestWaitReadyFatal(t *testing.T) {
+	hooks, _ := testHooks()
+	release := make(chan struct{})
+
+	failing := &File{MCPServers: map[string]ServerConfig{
+		"critical": {Transport: "stdio", Command: "unused", FailOnStartupError: true},
+		"normal":   {Transport: "stdio", Command: "unused"},
+	}}
+	mgr, err := NewManager(failing, hooks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	factory, cleanup := startTestServer(t, "")
+	t.Cleanup(cleanup)
+	mgr.SetTransportHook(func(name string) func() (mcpsdk.Transport, error) {
+		if name == "critical" {
+			return func() (mcpsdk.Transport, error) { return nil, errors.New("boom") }
+		}
+		return blockingFactory(release, factory)
+	})
+	for _, s := range mgr.sups {
+		s.transportFactory = mgr.transportHook(s.name)
+	}
+	mgr.Start()
+	if err := mgr.WaitReadyFatal(); err == nil || !strings.Contains(err.Error(), "critical") {
+		t.Fatalf("WaitReadyFatal = %v, want critical failure", err)
+	}
+	close(release)
+	mgr.Shutdown()
+
+	healthy := &File{MCPServers: map[string]ServerConfig{
+		"critical": {Transport: "stdio", Command: "unused", FailOnStartupError: true},
+		"normal":   {Transport: "stdio", Command: "unused"},
+	}}
+	mgr2, err := NewManager(healthy, hooks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release2 := make(chan struct{})
+	// Fresh pipe per connection: the critical and normal servers each
+	// connect once (sharing one pipe would deadlock the handshake).
+	factory2, _ := startTestServerGen(t)
+	mgr2.SetTransportHook(func(name string) func() (mcpsdk.Transport, error) {
+		if name == "critical" {
+			return factory2
+		}
+		return blockingFactory(release2, factory2)
+	})
+	for _, s := range mgr2.sups {
+		s.transportFactory = mgr2.transportHook(s.name)
+	}
+	mgr2.Start()
+	start := time.Now()
+	if err := mgr2.WaitReadyFatal(); err != nil {
+		t.Fatalf("WaitReadyFatal = %v, want nil", err)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("WaitReadyFatal waited for non-fatal servers: %v", elapsed)
+	}
+	close(release2)
+	mgr2.Shutdown()
 }
 
 // Manager supervisor order is sorted by server name, keeping the initial
@@ -425,7 +560,7 @@ func TestGiveUpAfterFailedResyncUnregisters(t *testing.T) {
 	}
 	sup.start()
 	defer sup.Shutdown()
-	if err := <-sup.Ready(); err != nil {
+	if err := sup.AwaitReady(); err != nil {
 		t.Fatal(err)
 	}
 	if len(sup.Tools()) != 1 {

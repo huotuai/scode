@@ -332,8 +332,12 @@ var catalog = map[string]Message{
 		Zh: "会话 %s",
 	},
 	"tui.render.hintLine1": {
-		En: "Enter send · ctrl+j newline · typing while running=steer · esc interrupt · ctrl+c quit",
-		Zh: "Enter 发送 · ctrl+j 换行 · 运行中输入=steer · esc 中断 · ctrl+c 退出",
+		En: "Enter send · ctrl+j newline · typing while running=steer · esc interrupt · ctrl+c×2 quit",
+		Zh: "Enter 发送 · ctrl+j 换行 · 运行中输入=steer · esc 中断 · ctrl+c×2 退出",
+	},
+	"tui.quit.confirmHint": {
+		En: "press ctrl+c again to quit",
+		Zh: "再按一次 ctrl+c 退出",
 	},
 	"tui.render.hintLine2": {
 		En: "ctrl+o expand thinking · @ pick file · alt+v paste image · / commands",

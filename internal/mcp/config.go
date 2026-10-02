@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"time"
 )
 
 // Defaults (dsh's Config schema values).
@@ -36,6 +37,11 @@ const (
 	DefaultReconnectInitialDelayMs = 500
 	DefaultReconnectMaxDelayMs     = 30_000
 	DefaultReconnectMaxAttempts    = 10
+
+	// DefaultStartupWaitMs is pi's startupWaitMs: the bounded chance
+	// still-connecting servers get to make their tools available before
+	// the session's first request.
+	DefaultStartupWaitMs = 10_000
 )
 
 // ServerConfig is one MCP server entry (dsh's StdioConfig |
@@ -83,6 +89,24 @@ type ReconnectConfig struct {
 // File is the mcp.json root: a map of server name → config.
 type File struct {
 	MCPServers map[string]ServerConfig `json:"mcpServers"`
+
+	// StartupWaitMs is pi's startupWaitMs: how long the session's first
+	// prompt waits for still-connecting servers before proceeding
+	// without their tools (they keep connecting in the background and
+	// their tools arrive as transcript deltas). 0 = default 10000,
+	// negative = no wait at all.
+	StartupWaitMs int `json:"startupWaitMs,omitempty"`
+}
+
+// StartupWait resolves the first-prompt wait budget with pi's default.
+func (f *File) StartupWait() time.Duration {
+	if f.StartupWaitMs == 0 {
+		return DefaultStartupWaitMs * time.Millisecond
+	}
+	if f.StartupWaitMs < 0 {
+		return 0
+	}
+	return time.Duration(f.StartupWaitMs) * time.Millisecond
 }
 
 // serverNamePattern is dsh's SERVER_NAME_PATTERN (kept under the public

@@ -5,7 +5,7 @@ import "strings"
 // Prompt commands are built-in slash commands that expand to canned
 // agent workflows (/commit, /commit-push-pr). They are NOT App.Command
 // builtins: the routers send them down the prompt path, and App.Run
-// expands them at the prompt boundary (the /skill:name discipline), so
+// expands them at the prompt boundary (the $name discipline), so
 // the agent executes the workflow with its bash tool under the usual
 // sandbox and permission gates.
 

@@ -49,7 +49,8 @@ type Supervisor struct {
 	gaveUp         bool // the reconnect budget is exhausted (terminal until restart)
 	disposed       bool
 	readyOnce      sync.Once
-	readyCh        chan error
+	readyCh        chan struct{}
+	readyErr       error // the first attempt's result, valid once readyCh closes
 	done           chan struct{}
 	wg             sync.WaitGroup
 
@@ -68,7 +69,7 @@ func newSupervisor(name string, cfg *ServerConfig, hooks Hooks) (*Supervisor, er
 		cfg:     cfg,
 		policy:  policy,
 		hooks:   hooks,
-		readyCh: make(chan error, 1),
+		readyCh: make(chan struct{}),
 		done:    make(chan struct{}),
 	}, nil
 }
@@ -80,9 +81,17 @@ func (s *Supervisor) log(format string, args ...any) {
 	}
 }
 
-// Ready settles after the FIRST connection attempt completes, success or
-// failure (dsh's connection.ready): the error is nil on success.
-func (s *Supervisor) Ready() <-chan error { return s.readyCh }
+// AwaitReady blocks until the FIRST connection attempt settles
+// (dsh's connection.ready), success or failure, and returns its error
+// — nil on success. Any number of callers may await (the non-blocking
+// startup waits per-subset and again, bounded, at the first prompt);
+// late callers return immediately.
+func (s *Supervisor) AwaitReady() error {
+	<-s.readyCh
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.readyErr
+}
 
 // Instructions returns the current attributed instructions block.
 func (s *Supervisor) Instructions() string {
@@ -152,8 +161,9 @@ func (s *Supervisor) settleReady(err error) {
 	s.readyOnce.Do(func() {
 		s.mu.Lock()
 		s.readyFired = true
+		s.readyErr = err
 		s.mu.Unlock()
-		s.readyCh <- err
+		close(s.readyCh)
 	})
 }
 
